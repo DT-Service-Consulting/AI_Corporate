@@ -1,0 +1,8 @@
+pandas
+streamlit
+plotly
+tqdm
+azure-ai-inference
+azure-core
+requests
+python-dotenv
