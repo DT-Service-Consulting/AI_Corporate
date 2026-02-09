@@ -10,7 +10,7 @@ Router-eval implements multiple routing strategies to optimize cost-accuracy tra
 
 ## Routing Methods
 
-The system implements five core routing strategies plus two baselines:
+The system implements five core routing strategies, five ensembling strategies, and two baselines:
 
 ### 1. **Keyword Router**
 Analyzes query text for reasoning-oriented keywords (analyze, evaluate, compliant, valid, breach, etc.). Selects the reasoning model when keywords are detected, otherwise uses the extraction model.
@@ -26,6 +26,23 @@ Inspects the extraction model's output quality. Falls back to the reasoning mode
 
 ### 5. **Oracle (Benchmark)**
 Theoretical upper-bound that always selects the model with the higher ground-truth score for evaluation purposes.
+
+## Ensembling Methods
+
+### 6. **Weighted Score Blend**
+Blends model scores: `score = w * 70B + (1 - w) * Maverick` (weight configurable in the UI).
+
+### 7. **Stacking Meta Router**
+Logistic Regression meta-classifier over router features (scores, score delta, doc length, keyword signal) to pick the model.
+
+### 8. **Soft MoE (Probabilistic Blend)**
+Uses RF probability output to blend scores as a soft mixture of experts.
+
+### 9. **Router Voting**
+Majority vote across Keyword, Length, Confidence, and ML Router, with a score-based tiebreak.
+
+### 10. **Two-Stage Cascade (Keyword + Confidence)**
+Route to 70B if either Keyword or Confidence indicates a fallback; otherwise Maverick.
 
 ### Baselines
 - **Pure Maverick**: Always uses the extraction model
@@ -98,7 +115,7 @@ Downloads and processes the LegalBench dataset for training and evaluation.
 ```bash
 python run_experiment.py
 ```
-Executes the full evaluation pipeline comparing routing methods.
+Executes the full evaluation pipeline comparing routing and ensembling methods.
 
 ### Run Hybrid System
 ```bash
@@ -109,6 +126,7 @@ Runs the complete hybrid routing system with both baselines and intelligent rout
 ## Key Features
 
 - **Multiple routing strategies**: Choose the best approach for your use case
+- **Ensembling strategies**: Blend or combine router decisions for higher accuracy
 - **Cost-accuracy optimization**: Dynamically balance model cost vs. quality
 - **ML-based routing**: Train supervised routers on your data
 - **Comprehensive evaluation**: Compare routing methods side-by-side
@@ -120,6 +138,11 @@ The routing system evaluates accuracy and cost trade-offs:
 - Each routing method is benchmarked against ground-truth scores
 - Cost is estimated based on model usage percentage (Maverick=cheaper, 70B=more expensive)
 - The Oracle provides theoretical maximum performance
+
+## Scoring Notes
+
+- **Extraction tasks** use soft overlap metrics (Jaccard/F2). This includes discovery tasks to avoid artificially zeroed extraction accuracy.
+- **Reasoning tasks** use a soft score based on answer similarity and correctness to avoid binary-only labels.
 
 ## Configuration
 
