@@ -4,6 +4,7 @@ import time
 import os
 from datetime import datetime
 from tqdm import tqdm
+import difflib
 from core_logic import evaluate_single_extraction, evaluate_reasoning, MODELS_TO_TEST
 
 # --- DATASET LOADING STRATEGY ---
@@ -83,19 +84,33 @@ def run():
                 query = item.get('query_intent', item['target'])
                 res = evaluate_single_extraction(item['input'], query, model)
                 
-                if item.get('is_discovery', False):
-                    score_main = 0.0
-                    metrics = res['metrics']
-                else:
-                    score_main = res['metrics']['f2']
-                    metrics = res['metrics']
+                # Use a softer metric for router labeling and reporting
+                # NOTE: discovery tasks still get a real score so extraction accuracy isn't forced to 0
+                score_main = res['metrics'].get('jaccard', res['metrics'].get('f2', 0.0))
+                metrics = res['metrics']
 
             # CASE B: REASONING
             elif item['type'] == 'reasoning':
                 answer_obj = {'question': item['input']['question'], 'options': item['input']['options'], 'answer': item['target']}
                 res = evaluate_reasoning(item['input']['rule'], item['input']['facts'], answer_obj, model)
-                score_main = res['metrics']['accuracy']
-                metrics = {"accuracy": score_main}
+                # Soft scoring for reasoning to avoid binary-only labels
+                parsed_answer = str(res.get("parsed_answer", "")).lower().strip()
+                ground_truth = str(item['target']).lower().strip()
+                model_output = str(res.get("model_output", "")).lower()
+
+                is_correct = res['metrics']['accuracy'] == 1.0
+                soft_sim = difflib.SequenceMatcher(None, parsed_answer, ground_truth).ratio()
+                mentions_gt = 1.0 if ground_truth and ground_truth in model_output else 0.0
+
+                score_main = max(soft_sim, 0.5 * mentions_gt)
+                if is_correct:
+                    score_main = max(score_main, 1.0)
+
+                metrics = {
+                    "accuracy": res['metrics']['accuracy'],
+                    "soft_score": round(score_main, 3),
+                    "parsed_answer": parsed_answer
+                }
 
             # --- SAVE RESULT ---
             record = {
