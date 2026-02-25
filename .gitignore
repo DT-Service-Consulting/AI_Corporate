@@ -42,6 +42,10 @@ outputs/
 results.json
 hybrid_system_results.json
 outputs/*.json
+split_manifest.json
+run_metadata.json
+hybrid_no_*.json
+outputs/research_eval/
 
 # Jupyter
 .ipynb_checkpoints/

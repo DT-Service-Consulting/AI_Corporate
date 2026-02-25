@@ -4,7 +4,7 @@ An advanced intelligent routing system for legal document analysis that dynamica
 
 ## Overview
 
-Router-eval implements multiple routing strategies to optimize cost-accuracy trade-offs when processing legal documents. The system routes queries to either:
+Router-eval implements multiple routing strategies to optimize accuracy-first performance when processing legal documents. The system routes queries to either:
 - **Maverick (17B)**: Lightweight extraction model for factual information retrieval
 - **Llama-3 (70B)**: Powerful reasoning model for complex legal analysis
 
@@ -103,7 +103,7 @@ pip install -r requirements.txt
 ```bash
 streamlit run architecture_lab.py
 ```
-Opens an interactive dashboard comparing all routing strategies with performance metrics and cost analysis.
+Opens an interactive dashboard comparing all routing strategies with accuracy-focused metrics and secondary cost analysis.
 
 ### Ingest Legal Data
 ```bash
@@ -117,26 +117,53 @@ python run_experiment.py
 ```
 Executes the full evaluation pipeline comparing routing and ensembling methods.
 
+Reproducibility options:
+```bash
+python run_experiment.py --seed 42 --test-size 0.2 --val-size 0.2 --rate-limit-s 0.5
+```
+This also writes:
+- `split_manifest.json` (deterministic train/val/test assignment)
+- `run_metadata.json` (run-level provenance)
+
 ### Run Hybrid System
 ```bash
 python run_hybrid_system.py
 ```
 Runs the complete hybrid routing system with both baselines and intelligent routers.
 
+Ablation-friendly options:
+```bash
+python run_hybrid_system.py --split-filter test --router-variant full
+python run_hybrid_system.py --split-filter test --router-variant no_keyword --output hybrid_no_keyword.json
+python run_hybrid_system.py --split-filter test --router-variant no_length --output hybrid_no_length.json
+python run_hybrid_system.py --split-filter test --router-variant no_reasoning_override --output hybrid_no_override.json
+```
+
+### Publication-Focused Evaluation
+```bash
+python evaluate_research_ready.py --results results.json --output-dir outputs/research_eval --seeds 42,43,44
+```
+Generates:
+- `outputs/research_eval/method_summary.csv` (mean/std across seeds)
+- `outputs/research_eval/method_by_seed.csv` (per-seed results)
+- `outputs/research_eval/task_breakdown.csv` (per-task-type breakdown)
+- `outputs/research_eval/error_cases_seed_*.json` (top regret cases for qualitative analysis)
+
 ## Key Features
 
 - **Multiple routing strategies**: Choose the best approach for your use case
 - **Ensembling strategies**: Blend or combine router decisions for higher accuracy
-- **Cost-accuracy optimization**: Dynamically balance model cost vs. quality
+- **Accuracy-first optimization**: Prioritize task performance while tracking secondary cost/latency
 - **ML-based routing**: Train supervised routers on your data
 - **Comprehensive evaluation**: Compare routing methods side-by-side
 - **Interactive visualization**: Streamlit dashboard with performance metrics
 
 ## Performance
 
-The routing system evaluates accuracy and cost trade-offs:
+The routing system evaluates accuracy as the primary objective, with cost/latency as secondary diagnostics:
 - Each routing method is benchmarked against ground-truth scores
-- Cost is estimated based on model usage percentage (Maverick=cheaper, 70B=more expensive)
+- Cost is estimated per record from approximate token counts and model-specific rates
+- Latency is logged per record to support quality-cost-latency tradeoff analysis
 - The Oracle provides theoretical maximum performance
 
 ## Scoring Notes
