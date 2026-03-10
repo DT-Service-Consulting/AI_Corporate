@@ -111,6 +111,17 @@ python ingest_legalbench.py
 ```
 Downloads and processes the LegalBench dataset for training and evaluation.
 
+### Mine Clause-Level Extraction Tasks (50+)
+```bash
+python mine_extraction_tasks.py --input data/real_tenders.json --output data/real_tenders_extraction_qa.json --target-min 50
+```
+Generates extraction QA records with:
+- exact target spans (`target`) and explicit query intents (`query_intent`)
+- hard negatives for missing clauses (`target = "NOT_FOUND"`)
+- long-document stress variants
+
+`run_experiment.py` and `run_hybrid_system.py` automatically prefer `data/real_tenders_extraction_qa.json` when present.
+
 ### Run Experiments
 ```bash
 python run_experiment.py
@@ -141,13 +152,43 @@ python run_hybrid_system.py --split-filter test --router-variant no_reasoning_ov
 
 ### Publication-Focused Evaluation
 ```bash
-python evaluate_research_ready.py --results results.json --output-dir outputs/research_eval --seeds 42,43,44
+python evaluate_research_ready.py --results results.json --output-dir outputs/research_eval --seeds 42,43,44,45,46
 ```
 Generates:
 - `outputs/research_eval/method_summary.csv` (mean/std across seeds)
 - `outputs/research_eval/method_by_seed.csv` (per-seed results)
 - `outputs/research_eval/task_breakdown.csv` (per-task-type breakdown)
+- `outputs/research_eval/oracle_gap_summary.csv` (regret-to-oracle summary + CI)
+- `outputs/research_eval/paired_significance.csv` (paired bootstrap significance tests)
+- `outputs/research_eval/instance_level_scores.csv` (instance-level scores for custom analysis)
+- `outputs/research_eval/task_imbalance_report.json` (task-count imbalance warning for claim scoping)
 - `outputs/research_eval/error_cases_seed_*.json` (top regret cases for qualitative analysis)
+
+Useful options:
+```bash
+python evaluate_research_ready.py --reference-method always_maverick --bootstrap-samples 4000 --ci-level 0.95 --uncertainty-threshold 0.70 --task-balance-power 1.5
+```
+
+Recommended for extraction-biased uncertainty handling:
+```bash
+python evaluate_research_ready.py --results results.json --output-dir outputs/research_eval --seeds 42,43,44,45,46 --task-balance-power 1.5 --uncertainty-threshold 0.7
+```
+This includes `learning_uncertainty_fallback_maverick`, which routes uncertain cases to the extraction model.
+
+Recursive routing policy is also available via `recursive_routing_policy` with controls:
+```bash
+python evaluate_research_ready.py --results results.json --output-dir outputs/research_eval --seeds 42,43,44,45,46 --recursive-max-depth 3 --recursive-low-confidence 0.62 --recursive-high-confidence 0.78
+```
+
+Split-robustness runner (dynamic stratified splits):
+```bash
+python run_split_robustness.py --execute
+```
+
+Component ablations for extraction chunking and NOT_FOUND normalization:
+```bash
+python run_component_ablations.py --execute
+```
 
 ## Key Features
 

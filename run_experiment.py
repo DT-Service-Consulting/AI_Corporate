@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -45,6 +46,8 @@ MODEL_COST_PER_1K_TOKENS = {
     "Llama-4-Maverick-17B-128E-Instruct-FP8": 0.20,
     "Llama-3.3-70B-Instruct": 0.80,
 }
+
+ERROR_OUTPUT_RE = re.compile(r"(azure error|error:\s*no client|internal_server_error|backend returned unexpected response)", re.IGNORECASE)
 
 
 @dataclass
@@ -88,7 +91,9 @@ def stable_task_id(item: Dict, idx: int) -> str:
 
 
 def load_dataset() -> List[Dict]:
-    tender_data = load_json_list("data/real_tenders.json")
+    tender_data = load_json_list("data/real_tenders_extraction_qa.json")
+    if not tender_data:
+        tender_data = load_json_list("data/real_tenders.json")
     legalbench_data = load_json_list("data/legalbench_data.json")
     full = CONTROL_GROUP + tender_data + legalbench_data
 
@@ -164,10 +169,18 @@ def normalize_reasoning_score(res: Dict, ground_truth: str) -> Dict:
     return {"score": round(score_main, 6), "metrics": metrics}
 
 
-def evaluate_item(item: Dict, model: str) -> Dict:
+def evaluate_item(item: Dict, model: str, extraction_chunking: bool, canonical_not_found: bool) -> Dict:
     if item["type"] == "extraction":
         query = item.get("query_intent", item.get("target", ""))
-        res = evaluate_single_extraction(item.get("input", ""), query, model)
+        target = item.get("target", query)
+        res = evaluate_single_extraction(
+            item.get("input", ""),
+            query,
+            model,
+            expected_text=target,
+            enable_chunking=extraction_chunking,
+            canonicalize_missing_enabled=canonical_not_found,
+        )
         score = res["metrics"].get("jaccard", res["metrics"].get("f2", 0.0))
         return {
             "score": round(float(score), 6),
@@ -203,7 +216,27 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--test-size", type=float, default=0.2)
     p.add_argument("--val-size", type=float, default=0.2)
     p.add_argument("--rate-limit-s", type=float, default=0.5)
+    p.add_argument("--max-retries", type=int, default=3, help="Retries per model-task call on transient API failure.")
+    p.add_argument("--retry-backoff-s", type=float, default=1.0, help="Exponential backoff base seconds for retries.")
+    p.add_argument(
+        "--extraction-chunking",
+        choices=["on", "off"],
+        default="on",
+        help="Enable chunk-retrieve extraction for long documents.",
+    )
+    p.add_argument(
+        "--canonical-not-found",
+        choices=["on", "off"],
+        default="on",
+        help="Enable NOT_FOUND canonicalization in extraction scoring.",
+    )
     return p.parse_args()
+
+
+def is_failed_model_output(output_text: str) -> bool:
+    if output_text is None:
+        return True
+    return bool(ERROR_OUTPUT_RE.search(str(output_text)))
 
 
 def run() -> None:
@@ -220,11 +253,32 @@ def run() -> None:
     for model in MODELS_TO_TEST:
         print(f"Evaluating model: {model}")
         for item in tqdm(dataset, desc=f"{model}"):
-            start = time.perf_counter()
-            out = evaluate_item(item, model)
-            latency_ms = round((time.perf_counter() - start) * 1000.0, 3)
+            attempt = 0
+            out = None
+            latency_ms = 0.0
+            eval_status = "failed"
+            while attempt <= args.max_retries:
+                start = time.perf_counter()
+                out = evaluate_item(
+                    item,
+                    model,
+                    extraction_chunking=(args.extraction_chunking == "on"),
+                    canonical_not_found=(args.canonical_not_found == "on"),
+                )
+                latency_ms = round((time.perf_counter() - start) * 1000.0, 3)
+                if not is_failed_model_output(out.get("model_output", "")):
+                    eval_status = "ok"
+                    break
+                if attempt < args.max_retries:
+                    sleep_s = args.retry_backoff_s * (2 ** attempt)
+                    time.sleep(max(0.0, sleep_s))
+                attempt += 1
+            if out is None:
+                out = {"score": 0.0, "metrics": {}, "model_output": "Error: evaluation did not produce output", "query": ""}
 
             prompt_text = str(item.get("input", ""))
+            model_output = str(out.get("model_output", ""))
+            output_for_cost = model_output if eval_status == "ok" else ""
             record = {
                 "id": item["id"],
                 "split": split_manifest.get(item["id"], "unknown"),
@@ -236,13 +290,17 @@ def run() -> None:
                 "ground_truth": item.get("target", ""),
                 "input": item.get("input", ""),
                 "query": out["query"],
-                "full_output": out["model_output"],
-                "score": out["score"],
+                "full_output": model_output,
+                "score": out["score"] if eval_status == "ok" else 0.0,
                 "metrics": out["metrics"],
+                "eval_status": eval_status,
+                "attempts_used": int(attempt + 1),
+                "extraction_chunking": args.extraction_chunking,
+                "canonical_not_found": args.canonical_not_found,
                 "latency_ms": latency_ms,
                 "est_prompt_tokens": estimate_tokens(prompt_text),
-                "est_output_tokens": estimate_tokens(out["model_output"]),
-                "est_cost_usd": estimate_cost_usd(model, prompt_text, out["model_output"]),
+                "est_output_tokens": estimate_tokens(output_for_cost),
+                "est_cost_usd": estimate_cost_usd(model, prompt_text, output_for_cost),
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             }
             results.append(record)

@@ -65,7 +65,10 @@ def load_json_list(path: str) -> List[Dict]:
 
 
 def load_data() -> List[Dict]:
-    data = CONTROL_GROUP + load_json_list("data/real_tenders.json") + load_json_list("data/legalbench_data.json")
+    tender_data = load_json_list("data/real_tenders_extraction_qa.json")
+    if not tender_data:
+        tender_data = load_json_list("data/real_tenders.json")
+    data = CONTROL_GROUP + tender_data + load_json_list("data/legalbench_data.json")
     for idx, item in enumerate(data):
         if not item.get("id"):
             raw = json.dumps(
@@ -161,7 +164,8 @@ def run_hybrid_test(args: argparse.Namespace) -> None:
             start = time.perf_counter()
             if item["type"] == "extraction":
                 query = item.get("query_intent", item.get("target", ""))
-                res = evaluate_single_extraction(item["input"], query, selected_model)
+                target = item.get("target", query)
+                res = evaluate_single_extraction(item["input"], query, selected_model, expected_text=target)
                 score = res["metrics"].get("jaccard", res["metrics"].get("f2", 0.0))
             else:
                 res = evaluate_reasoning(

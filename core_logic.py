@@ -1,24 +1,27 @@
+﻿import collections
 import difflib
+import re
+import string
+
 from azure.ai.inference import ChatCompletionsClient
 from azure.ai.inference.models import SystemMessage, UserMessage
 from azure.core.credentials import AzureKeyCredential
-import string
-import collections
 
 # --- CONFIGURATION: MODELS ---
 # These must match your Azure AI Foundry deployment names exactly.
 MODELS_TO_TEST = [
     "Llama-3.3-70B-Instruct",
-    "Llama-4-Maverick-17B-128E-Instruct-FP8"
+    "Llama-4-Maverick-17B-128E-Instruct-FP8",
 ]
 
 # --- CONFIGURATION: SECRETS ---
 try:
     import project_secrets
+
     ENDPOINT = project_secrets.AZURE_LLAMA_ENDPOINT
     KEY = project_secrets.AZURE_LLAMA_KEY
 except ImportError:
-    print("⚠️ CRITICAL ERROR: 'project_secrets.py' not found.")
+    print("CRITICAL ERROR: 'project_secrets.py' not found.")
     ENDPOINT = None
     KEY = None
 
@@ -28,160 +31,281 @@ if ENDPOINT and KEY:
     try:
         client = ChatCompletionsClient(
             endpoint=ENDPOINT,
-            credential=AzureKeyCredential(KEY)
+            credential=AzureKeyCredential(KEY),
         )
     except Exception as e:
-        print(f"⚠️ Error initializing Azure Client: {e}")
+        print(f"Error initializing Azure Client: {e}")
+
+
+NOT_FOUND_TOKEN = "NOT_FOUND"
+
 
 def normalize_text(text):
     """
-    Removes quotes, punctuation, and extra whitespace for fair comparison.
-    Converts "month"" -> "month"
+    Normalize text for overlap metrics:
+    - casing/whitespace cleanup
+    - punctuation removal
+    - section symbol normalization
     """
     if not text:
         return ""
-    # Remove all punctuation (including quotes)
-    remove_tokens = [".", ",", ";", ":", "'", '"', "(", ")"]
+    text = str(text)
+    text = text.replace("§", " section ")
+    text = text.replace("“", '"').replace("”", '"').replace("’", "'").replace("`", "'")
+    text = re.sub(r"\b(sec\.|cl\.)\b", "section", text, flags=re.IGNORECASE)
     text = text.lower()
-    for token in remove_tokens:
-        text = text.replace(token, "")
+    text = re.sub(r"[\r\n\t]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    text = text.translate(str.maketrans("", "", string.punctuation))
     return text.strip()
 
-# --- METRIC FUNCTIONS ---
+
+def canonicalize_missing(text: str) -> str:
+    t = normalize_text(text)
+    markers = {
+        "not found",
+        "notfound",
+        "no related clause",
+        "no clause found",
+        "no relevant clause",
+        "none",
+        "na",
+        "n a",
+    }
+    if t in markers:
+        return NOT_FOUND_TOKEN
+    return str(text)
+
+
+def postprocess_extraction_output(text: str) -> str:
+    if not text:
+        return ""
+    out = str(text).strip()
+    out = re.sub(r"^```[a-zA-Z]*\s*", "", out).strip()
+    out = re.sub(r"\s*```$", "", out).strip()
+    out = re.sub(r"^(answer|final answer|output)\s*:\s*", "", out, flags=re.IGNORECASE).strip()
+    out = re.sub(r"^\s*['\"]|['\"]\s*$", "", out).strip()
+    out = re.sub(r"\s+", " ", out).strip()
+    canon = canonicalize_missing(out)
+    if canon == NOT_FOUND_TOKEN:
+        return NOT_FOUND_TOKEN
+    return out
+
+
 def get_jaccard(gt, pred):
-    """
-    Calculates Intersection over Union (IoU) of words.
-    Score: 0.0 (No overlap) to 1.0 (Perfect match).
-    """
-    """
-    Calculates Jaccard Similarity on token sets.
-    """
+    """Calculates Jaccard similarity on token sets."""
     gt_clean = normalize_text(gt)
     pred_clean = normalize_text(pred)
-    
+
     gt_words = set(gt_clean.split())
     pred_words = set(pred_clean.split())
-    
+
     if len(gt_words) == 0 and len(pred_words) == 0:
         return 1.0
-    
+
     intersection = len(gt_words.intersection(pred_words))
     union = len(gt_words.union(pred_words))
-    
+
     return intersection / union if union > 0 else 0.0
 
-def calculate_advanced_metrics(prediction, ground_truth):
-    """
-    Calculates Precision, Recall, F1, and F2 (Beta=2).
-    """
-    pred_tokens = normalize_text(prediction).split()
-    truth_tokens = normalize_text(ground_truth).split()
-    
-    # 1. Laziness Detection
-    # If model says "no related clause" but there IS a ground truth -> FAIL
-    is_lazy = False
-    if "no related clause" in prediction.lower() and len(truth_tokens) > 0:
-        is_lazy = True
 
-    # 2. Token Overlap
+def calculate_advanced_metrics(prediction, ground_truth, canonicalize_missing_enabled: bool = True):
+    """
+    Calculates Precision, Recall, F1, and F2 (Beta=2),
+    with canonical NOT_FOUND handling.
+    """
+    pred_raw = postprocess_extraction_output(prediction)
+    gt_raw = canonicalize_missing(ground_truth) if canonicalize_missing_enabled else str(ground_truth)
+    if not canonicalize_missing_enabled:
+        pred_raw = str(prediction or "").strip()
+
+    if gt_raw == NOT_FOUND_TOKEN and pred_raw == NOT_FOUND_TOKEN:
+        return {
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "f2": 1.0,
+            "jaccard": 1.0,
+            "is_lazy": False,
+        }
+
+    if gt_raw == NOT_FOUND_TOKEN and pred_raw != NOT_FOUND_TOKEN:
+        return {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "f2": 0.0,
+            "jaccard": 0.0,
+            "is_lazy": False,
+        }
+
+    pred_tokens = normalize_text(pred_raw).split()
+    truth_tokens = normalize_text(gt_raw).split()
+
+    is_lazy = pred_raw == NOT_FOUND_TOKEN and len(truth_tokens) > 0
+
     common = collections.Counter(pred_tokens) & collections.Counter(truth_tokens)
     num_same = sum(common.values())
-    
-    if len(pred_tokens) == 0:
-        precision = 0.0
-    else:
-        precision = num_same / len(pred_tokens)
-        
-    if len(truth_tokens) == 0:
-        recall = 0.0
-    else:
-        recall = num_same / len(truth_tokens)
-    
-    # 3. F1 Score (Balanced)
+
+    precision = 0.0 if len(pred_tokens) == 0 else num_same / len(pred_tokens)
+    recall = 0.0 if len(truth_tokens) == 0 else num_same / len(truth_tokens)
+
     if precision + recall == 0:
         f1 = 0.0
     else:
         f1 = (2 * precision * recall) / (precision + recall)
-        
-    # 4. F2 Score (Recall-Weighted, crucial for Law)
-    # Formula: (5 * P * R) / (4 * P + R)
+
     if (4 * precision) + recall == 0:
         f2 = 0.0
     else:
         f2 = (5 * precision * recall) / ((4 * precision) + recall)
-        
+
     return {
         "precision": round(precision, 3),
         "recall": round(recall, 3),
         "f1": round(f1, 3),
         "f2": round(f2, 3),
-        "jaccard": round(get_jaccard(ground_truth, prediction), 3),
-        "is_lazy": is_lazy
+        "jaccard": round(get_jaccard(gt_raw, pred_raw), 3),
+        "is_lazy": is_lazy,
     }
+
 
 # --- LLM FUNCTIONS ---
 def call_azure_llm(prompt, model_name):
-    """
-    Sends a request to the specific model deployed on Azure.
-    """
-    if not client: return "Error: No Client"
+    """Sends a request to the specific model deployed on Azure."""
+    if not client:
+        return "Error: No Client"
     try:
         response = client.complete(
             messages=[
-                SystemMessage(content="You are a legal AI. Extract relevant text exactly. If nothing is found, say 'No related clause'."),
+                SystemMessage(content=f"You are a legal AI. Return exact copied span only. If missing, return {NOT_FOUND_TOKEN}."),
                 UserMessage(content=prompt),
             ],
             model=model_name,
             temperature=0.0,
-            max_tokens=1000
+            max_tokens=1000,
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
         return f"Azure Error: {e}"
 
-def evaluate_single_extraction(input_text, ground_truth, model_name):
-    """
-    Standardized Extraction Pipeline (v3.1)
-    - Input: Document Text + "Query" (Ground Truth target)
-    - Output: Metrics (F2, Precision, Recall, Laziness)
-    """
-    
-    # --- 1. UNIVERSAL PROMPT (v3.1) ---
-    # Engineered for Llama 3, Phi-4, and GPT-4 consistency.
-    prompt = f"""
+
+def build_extraction_prompt(requirement_text: str, document_text: str) -> str:
+    return f"""
     ### ROLE
-    You are a high-precision Legal Audit AI. Your job is to extract text from contracts with 100% fidelity.
+    You are a high-precision Legal Extraction AI.
 
     ### TASK
-    Find and extract the specific text segment from the DOCUMENT below that matches the QUERY.
+    Extract the exact span from DOCUMENT that satisfies REQUIREMENT.
 
-    ### QUERY / REQUIREMENT
-    "{ground_truth}"
+    ### REQUIREMENT
+    "{requirement_text}"
 
     ### DOCUMENT
-    "{input_text}"
+    "{document_text}"
 
     ### STRICT OUTPUT RULES
-    1.  **Extraction Only:** Return ONLY the exact text found in the document. Do not change a single word or punctuation mark.
-    2.  **No Conversational Filler:** Do NOT say "Here is the text" or "The clause is:". Just output the text.
-    3.  **Negative Constraint:** If the document does NOT contain text matching the requirement, output exactly: "No related clause"
-    4.  **Scope:** Do not extract the whole paragraph if only one sentence matches. Be precise.
-
-    ### FINAL ANSWER
+    1. Return only the exact copied span from DOCUMENT. No paraphrase.
+    2. Do not add explanations, headers, or formatting.
+    3. If the span is missing, output exactly: {NOT_FOUND_TOKEN}
+    4. Output one span only.
     """
 
-    # --- 2. MODEL CALL ---
-    model_output = call_azure_llm(prompt, model_name)
 
-    # --- 3. SCORING (ContractEval Logic) ---
-    metrics = calculate_advanced_metrics(model_output, ground_truth)
-    
+def chunk_document(text: str, chunk_size: int = 2600, overlap: int = 300):
+    src = str(text or "")
+    if len(src) <= chunk_size:
+        return [src]
+    chunks = []
+    start = 0
+    while start < len(src):
+        end = min(len(src), start + chunk_size)
+        chunks.append(src[start:end])
+        if end >= len(src):
+            break
+        start = max(0, end - overlap)
+    return chunks
+
+
+def rank_chunks_by_query(chunks, requirement_text: str):
+    q_tokens = set(normalize_text(requirement_text).split())
+    ranked = []
+    for idx, ch in enumerate(chunks):
+        c_tokens = set(normalize_text(ch).split())
+        overlap = len(q_tokens.intersection(c_tokens))
+        density = overlap / (len(q_tokens) + 1e-9)
+        ranked.append((density, overlap, -len(ch), idx))
+    ranked.sort(reverse=True)
+    return [chunks[r[3]] for r in ranked]
+
+
+def pick_best_candidate(candidates, requirement_text: str):
+    cleaned = [postprocess_extraction_output(c) for c in candidates if c]
+    cleaned = [c for c in cleaned if c and c != NOT_FOUND_TOKEN]
+    if not cleaned:
+        return NOT_FOUND_TOKEN
+    q_tokens = set(normalize_text(requirement_text).split())
+    scored = []
+    for c in cleaned:
+        c_tokens = set(normalize_text(c).split())
+        overlap = len(q_tokens.intersection(c_tokens))
+        scored.append((overlap, len(c), c))
+    scored.sort(reverse=True)
+    return scored[0][2]
+
+
+def evaluate_single_extraction(
+    input_text,
+    requirement_text,
+    model_name,
+    expected_text=None,
+    chunk_size: int = 2600,
+    chunk_overlap: int = 300,
+    top_k_chunks: int = 3,
+    long_doc_threshold: int = 6000,
+    enable_chunking: bool = True,
+    canonicalize_missing_enabled: bool = True,
+):
+    """
+    Extraction evaluator with:
+    - strict exact-span output prompt
+    - canonical NOT_FOUND
+    - long-document chunk retrieval + merge
+    """
+    if expected_text is None:
+        expected_text = requirement_text
+
+    doc_text = str(input_text or "")
+    req_text = str(requirement_text or "")
+
+    if enable_chunking and len(doc_text) > long_doc_threshold:
+        chunks = chunk_document(doc_text, chunk_size=chunk_size, overlap=chunk_overlap)
+        ranked_chunks = rank_chunks_by_query(chunks, req_text)[: max(1, int(top_k_chunks))]
+        candidate_outputs = []
+        for chunk in ranked_chunks:
+            prompt = build_extraction_prompt(req_text, chunk)
+            candidate_outputs.append(call_azure_llm(prompt, model_name))
+        model_output = pick_best_candidate(candidate_outputs, req_text)
+    else:
+        prompt = build_extraction_prompt(req_text, doc_text)
+        model_output = call_azure_llm(prompt, model_name)
+
+    model_output = postprocess_extraction_output(model_output) if canonicalize_missing_enabled else str(model_output or "").strip()
+    expected_text = canonicalize_missing(str(expected_text)) if canonicalize_missing_enabled else str(expected_text)
+
+    metrics = calculate_advanced_metrics(
+        model_output,
+        expected_text,
+        canonicalize_missing_enabled=canonicalize_missing_enabled,
+    )
+
     return {
         "model_used": model_name,
         "model_output": model_output,
-        "ground_truth": ground_truth,
-        "metrics": metrics 
+        "ground_truth": expected_text,
+        "metrics": metrics,
     }
+
 
 def evaluate_reasoning(rule, fact_pattern, correct_answer_obj, model_name):
     """
@@ -189,7 +313,7 @@ def evaluate_reasoning(rule, fact_pattern, correct_answer_obj, model_name):
     - Mode A (IRAC): User provides a RULE + FACTS -> Model applies logic.
     - Mode B (Knowledge QA): User provides TEXT -> Model classifies/answers based on internal legal knowledge.
     """
-    
+
     # --- 1. PROMPT ENGINEERING ---
     if rule and len(rule.strip()) > 5:
         # MODE A: Strict IRAC Logic (Rule is provided)
@@ -235,16 +359,16 @@ def evaluate_reasoning(rule, fact_pattern, correct_answer_obj, model_name):
 
     # --- 2. MODEL CALL ---
     raw_output = call_azure_llm(prompt, model_name)
-    
+
     # --- 3. SCORING (Robust Parsing) ---
     # We look for the answer at the end of the text or explicitly tagged
     parsed_answer = "UNKNOWN"
     ground_truth = str(correct_answer_obj['answer']).lower().strip()
-    
+
     # Strategy 1: strict "ANSWER:" tag
     if "ANSWER:" in raw_output:
         parsed_answer = raw_output.split("ANSWER:")[1].strip().lower()
-    
+
     # Strategy 2: Heuristic check (if model output is short or clearly contains the keyword)
     if parsed_answer == "UNKNOWN":
         for opt in correct_answer_obj.get('options', []):
@@ -258,7 +382,7 @@ def evaluate_reasoning(rule, fact_pattern, correct_answer_obj, model_name):
     # Exact Match Scoring
     # We check if the parsed answer *contains* the ground truth (handles "Yes." vs "Yes")
     is_correct = (ground_truth in parsed_answer) or (parsed_answer in ground_truth)
-    
+
     # Fallback: If both are simple Yes/No, ensure strict equality
     if ground_truth in ['yes', 'no'] and parsed_answer in ['yes', 'no']:
         is_correct = (ground_truth == parsed_answer)
