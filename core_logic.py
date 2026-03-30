@@ -1,18 +1,36 @@
 ﻿import collections
 import difflib
+import os
 import re
 import string
 
-from azure.ai.inference import ChatCompletionsClient
-from azure.ai.inference.models import SystemMessage, UserMessage
-from azure.core.credentials import AzureKeyCredential
+from openai import AzureOpenAI
 
 # --- CONFIGURATION: MODELS ---
 # These must match your Azure AI Foundry deployment names exactly.
 MODELS_TO_TEST = [
-    "Llama-3.3-70B-Instruct",
-    "Llama-4-Maverick-17B-128E-Instruct-FP8",
+    "gpt-4.1-2",
+    "gpt-4o-mini-2",
 ]
+REASONING_MODEL_NAME = "gpt-4.1-2"
+EXTRACTION_MODEL_NAME = "gpt-4o-mini-2"
+
+MODEL_LABELS = {
+    REASONING_MODEL_NAME: "GPT-4.1",
+    EXTRACTION_MODEL_NAME: "GPT-4o Mini",
+}
+
+# Approximate per-1K-token rates used for local experiment cost estimation.
+# Update these if your Azure pricing or region differs.
+MODEL_COST_PER_1K_TOKENS = {
+    REASONING_MODEL_NAME: 0.010,
+    EXTRACTION_MODEL_NAME: 0.00075,
+}
+
+
+def format_model_label(model_name: str) -> str:
+    return MODEL_LABELS.get(model_name, model_name)
+
 
 # --- CONFIGURATION: SECRETS ---
 try:
@@ -20,18 +38,25 @@ try:
 
     ENDPOINT = project_secrets.AZURE_LLAMA_ENDPOINT
     KEY = project_secrets.AZURE_LLAMA_KEY
+    API_VERSION = getattr(
+        project_secrets,
+        "AZURE_OPENAI_API_VERSION",
+        os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21"),
+    )
 except ImportError:
     print("CRITICAL ERROR: 'project_secrets.py' not found.")
     ENDPOINT = None
     KEY = None
+    API_VERSION = None
 
 # --- CLIENT INIT ---
 client = None
 if ENDPOINT and KEY:
     try:
-        client = ChatCompletionsClient(
-            endpoint=ENDPOINT,
-            credential=AzureKeyCredential(KEY),
+        client = AzureOpenAI(
+            api_key=KEY,
+            api_version=API_VERSION,
+            azure_endpoint=ENDPOINT,
         )
     except Exception as e:
         print(f"Error initializing Azure Client: {e}")
@@ -171,21 +196,27 @@ def calculate_advanced_metrics(prediction, ground_truth, canonicalize_missing_en
 
 
 # --- LLM FUNCTIONS ---
-def call_azure_llm(prompt, model_name):
-    """Sends a request to the specific model deployed on Azure."""
+def call_azure_llm(prompt, model_name, system_prompt=None):
+    """Sends a request to the specific model deployed on Azure OpenAI."""
     if not client:
         return "Error: No Client"
     try:
-        response = client.complete(
+        response = client.chat.completions.create(
             messages=[
-                SystemMessage(content=f"You are a legal AI. Return exact copied span only. If missing, return {NOT_FOUND_TOKEN}."),
-                UserMessage(content=prompt),
+                {
+                    "role": "system",
+                    "content": system_prompt or "You are a careful legal AI assistant.",
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
             ],
             model=model_name,
             temperature=0.0,
             max_tokens=1000,
         )
-        return response.choices[0].message.content.strip()
+        return str(response.choices[0].message.content or "").strip()
     except Exception as e:
         return f"Azure Error: {e}"
 
@@ -284,11 +315,21 @@ def evaluate_single_extraction(
         candidate_outputs = []
         for chunk in ranked_chunks:
             prompt = build_extraction_prompt(req_text, chunk)
-            candidate_outputs.append(call_azure_llm(prompt, model_name))
+            candidate_outputs.append(
+                call_azure_llm(
+                    prompt,
+                    model_name,
+                    system_prompt=f"You are a legal AI. Return exact copied span only. If missing, return {NOT_FOUND_TOKEN}.",
+                )
+            )
         model_output = pick_best_candidate(candidate_outputs, req_text)
     else:
         prompt = build_extraction_prompt(req_text, doc_text)
-        model_output = call_azure_llm(prompt, model_name)
+        model_output = call_azure_llm(
+            prompt,
+            model_name,
+            system_prompt=f"You are a legal AI. Return exact copied span only. If missing, return {NOT_FOUND_TOKEN}.",
+        )
 
     model_output = postprocess_extraction_output(model_output) if canonicalize_missing_enabled else str(model_output or "").strip()
     expected_text = canonicalize_missing(str(expected_text)) if canonicalize_missing_enabled else str(expected_text)
@@ -358,7 +399,11 @@ def evaluate_reasoning(rule, fact_pattern, correct_answer_obj, model_name):
         """
 
     # --- 2. MODEL CALL ---
-    raw_output = call_azure_llm(prompt, model_name)
+    raw_output = call_azure_llm(
+        prompt,
+        model_name,
+        system_prompt="You are a precision legal reasoning assistant. Follow the prompt carefully and give the final answer in the requested ANSWER format.",
+    )
 
     # --- 3. SCORING (Robust Parsing) ---
     # We look for the answer at the end of the text or explicitly tagged

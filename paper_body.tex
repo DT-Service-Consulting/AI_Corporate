@@ -1,0 +1,234 @@
+\section{Introduction}
+Legal AI systems are increasingly used for document review, compliance checks, and legal question answering. In deployment, however, these tasks are heterogeneous. Extraction-heavy tasks reward high recall and robust span selection, while reasoning-heavy tasks demand stronger inferential consistency and legal interpretation. A single-model strategy therefore creates a persistent quality-control tradeoff: one model may be efficient but brittle on interpretation, another may be stronger on reasoning but slower and more expensive.
+
+This paper studies \textbf{model allocation} as a first-class problem. We present \textbf{LAMMR} (Legal Adaptive Multi-Model Router), a hybrid architecture that combines interpretable rule routing with learned routing to dynamically assign legal requests to specialized models. We evaluate not only average score but also failure concentration (zero-score rate), estimated cost, and latency-oriented behavior.
+
+\subsection{Contributions}
+This working paper makes four contributions:
+\begin{itemize}[leftmargin=*]
+  \item A practical hybrid routing design that unifies rule-based and learning-based control for legal AI workloads.
+  \item A dual-task evaluation protocol that separates extraction and reasoning metrics to avoid masked failures.
+  \item Empirical analysis over 1,005 tasks and 2,010 model-level baseline evaluations, plus routed policy evaluation.
+  \item A deployment-oriented discussion of robustness, transparency, and human oversight requirements.
+\end{itemize}
+
+\section{Problem Formulation}
+We model routing as a decision function $R(q, d) \rightarrow m$, where $q$ is a user query, $d$ is task/document context, and $m$ is the selected model. The objective is to maximize task-appropriate utility while respecting operational constraints:
+\begin{equation}
+\max_{R} \; \mathbb{E}\left[ \text{Score}(m \mid q,d) \right]
+\quad \text{subject to} \quad
+\text{Cost}, \text{Latency}, \text{Auditability}.
+\end{equation}
+
+We study three research questions:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{RQ1:} Can routing improve performance over static single-model deployment?
+  \item \textbf{RQ2:} Which signals contribute most: rules, learned predictors, or hybrids?
+  \item \textbf{RQ3:} How should mixed legal workloads be measured without obscuring high-risk failure modes?
+\end{itemize}
+
+\section{Related Positioning}
+LAMMR sits at the intersection of:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Hybrid AI control}: combining symbolic policies and learned components.
+  \item \textbf{Inference routing}: selecting models based on request properties.
+  \item \textbf{Legal AI benchmarking}: task-grounded evaluation frameworks such as LegalBench.
+\end{itemize}
+
+Our emphasis is operational rather than purely benchmark-centric: we treat routing transparency and controllability as deployment requirements, not optional add-ons.
+
+\section{LAMMR Architecture}
+\subsection{Model Roles}
+Current routing operates between:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Extraction model}: \texttt{Llama-4-Maverick-17B-128E-Instruct-FP8}
+  \item \textbf{Reasoning model}: \texttt{Llama-3.3-70B-Instruct}
+\end{itemize}
+
+\subsection{Rule-Based Router}
+The symbolic router applies a deterministic policy:
+\begin{enumerate}[leftmargin=*]
+  \item Reasoning-keyword priority for interpretive intents (e.g., ``analyze'', ``breach'', ``gdpr'').
+  \item Extraction-keyword detection for retrieval intents (e.g., ``extract'', ``find'', ``clause'').
+  \item Long-document heuristic to prefer extraction behavior for large inputs.
+  \item Reasoning default when intent is ambiguous.
+\end{enumerate}
+
+This layer is intentionally auditable: each route can be explained by concrete rule triggers.
+
+\subsection{Learning-Based Router}
+The learning router is trained to approximate oracle model choice using query and context features. In the current pipeline:
+\begin{itemize}[leftmargin=*]
+  \item Text features are derived from TF-IDF n-grams on query text.
+  \item Numeric features include query length and document length.
+  \item A Random Forest classifier predicts model preference.
+\end{itemize}
+The learning policy supports adaptation under changing task distributions while preserving simple integration with rule overrides.
+
+\subsection{Smart Evaluation Layer}
+Evaluation is explicitly split by task family:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Extraction}: overlap-oriented metrics (Jaccard/F2 family).
+  \item \textbf{Reasoning}: correctness-based scoring aligned with LegalBench-style items.
+\end{itemize}
+This avoids inflated aggregate reporting caused by class imbalance and heterogeneous score semantics.
+
+\section{Data and Experimental Protocol}
+\subsection{Dataset Composition}
+We report two phases of evaluation:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Legacy snapshot}: 1,005 tasks (999 reasoning, 6 extraction).
+  \item \textbf{Final validated run}: 1,093 tasks (999 reasoning, 94 extraction).
+\end{itemize}
+Data sources combine control items, tender/contract extraction tasks, and LegalBench-style reasoning tasks. The final run uses mined clause-level extraction QA pairs, hard negatives (\texttt{NOT\_FOUND}), and long-document stress variants.
+
+\subsection{Baselines and Policies}
+We evaluate:
+\begin{itemize}[leftmargin=*]
+  \item Static baselines: always-Maverick, always-70B.
+  \item Rule variants: full and ablated versions.
+  \item Learned routing and hybrid rule+learning routing.
+\end{itemize}
+
+\subsection{Protocol}
+Two levels of reporting are used:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Model-level baseline runs}: 2,010 evaluations in the legacy snapshot, and 2,186 evaluations in the final validated run.
+  \item \textbf{Policy-level routed runs}: routing behavior under selected policies and splits.
+\end{itemize}
+Where available, we report average score with estimated cost and latency as secondary deployment indicators.
+
+\section{Results}
+\subsection{Legacy Snapshot (For Continuity)}
+\begin{table}[H]
+\centering
+\caption{Legacy single-model baseline summary on the 1,005-task corpus}
+\begin{tabular}{lccc}
+\toprule
+Model & Mean overall score & Mean extraction score & Zero-score rate \\
+\midrule
+Llama-4-Maverick-17B-128E-Instruct-FP8 & 0.629 & 0.112 & 14.1\% \\
+Llama-3.3-70B-Instruct & 0.571 & 0.100 & 14.5\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Both static baselines are weak on extraction in absolute terms and exhibit non-trivial zero-score mass. This indicates that aggregate reasoning-heavy performance can hide reliability risks for retrieval/extraction requests.
+
+\begin{table}[H]
+\centering
+\caption{Legacy policy-level snapshot on held-out evaluation split}
+\begin{tabular}{lccc}
+\toprule
+Policy & Avg score & Avg cost (USD) & 70B usage \\
+\midrule
+Always-70B & 0.584 & 0.248 & 100.0\% \\
+Always-Maverick & 0.643 & 0.116 & 0.0\% \\
+Rule + learning hybrid & 0.631 & 0.151 & 29.4\% \\
+Learning-only router & 0.650 & 0.126 & 6.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Final Validated Results (Primary)}
+Final policy evaluation uses 5 seeds (42--46), bootstrap size 4,000, task-balance power 1.5, and uncertainty threshold 0.7 over the 1,093-task corpus.
+
+\begin{table}[H]
+\centering
+\caption{Final overall policy performance (mean across 5 seeds)}
+\begin{tabular}{lccc}
+\toprule
+Policy & Avg score & Avg cost (USD) & 70B usage \\
+\midrule
+Oracle upper bound & 0.6598 & 0.4971 & 82.65\% \\
+Learning-only router & \textbf{0.6353} & 0.2536 & 10.68\% \\
+Learning uncertainty fallback (70B) & 0.6305 & 0.2830 & 22.01\% \\
+Learning uncertainty fallback (Maverick) & 0.6258 & 0.2283 & 3.65\% \\
+Hybrid rule + learning & 0.6253 & 0.2778 & 28.13\% \\
+Always-Maverick baseline & 0.6126 & 0.1607 & 0.00\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Relative to the always-Maverick baseline, learning-only improves overall score by +0.0227 (+3.70\%), extraction by +0.0991 (+33.15\%), and reasoning by +0.0154 (+2.40\%). The uncertainty fallback (70B) policy delivers the strongest extraction gain (+0.1272, +42.56\%) with higher cost and 70B usage.
+
+\begin{table}[H]
+\centering
+\caption{Final task-family breakdown (mean score)}
+\begin{tabular}{lcc}
+\toprule
+Policy & Extraction score & Reasoning score \\
+\midrule
+Always-Maverick & 0.2988 & 0.6425 \\
+Learning-only & 0.3978 & 0.6578 \\
+Learning uncertainty fallback (70B) & 0.4259 & 0.6500 \\
+Learning uncertainty fallback (Maverick) & 0.3978 & 0.6475 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Paired bootstrap tests (vs always-Maverick) show significant gains for learning-only ($\Delta$=+0.02265, 95\% CI [0.01438, 0.03168], $p<0.001$), uncertainty fallback 70B ($\Delta$=+0.01789, 95\% CI [0.00663, 0.02965], $p=0.002$), and hybrid ($\Delta$=+0.01264, 95\% CI [0.00030, 0.02540], $p=0.044$). Oracle-gap analysis ranks learning-only as best non-oracle (mean regret 0.02452).
+
+\subsection{Recursive Routing Policy}
+We additionally evaluate a recursive routing policy that starts from learned routing and recursively refines low-confidence cases using rule signals. On the same evaluation setup, recursive routing achieves mean score 0.6187 (vs 0.6037 for always-Maverick), at lower 70B usage than learning-only (7.58\% vs 12.15\%) and lower average cost (0.2172 vs 0.2527). The gain over always-Maverick is statistically significant ($\Delta$=+0.01499, 95\% CI [0.00829, 0.02232], $p<0.001$). This policy is a cost-efficient alternative, though not the top accuracy policy.
+
+\section{Discussion}
+Three findings emerge:
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Allocation matters}: model selection strategy can be as consequential as base model capability.
+  \item \textbf{Hybrid control is pragmatic}: rule logic improves interpretability; learned routing improves adaptation.
+  \item \textbf{Metric granularity is necessary}: mixed-task averages alone are insufficient for legal-risk reporting.
+\end{itemize}
+
+For legal deployment, route explainability is a governance requirement. LAMMR supports this by making route decisions inspectable and by preserving explicit fallbacks.
+
+\section{Threats to Validity}
+\subsection{Internal Validity}
+Reasoning and extraction scores are derived from different metric families. Although this is methodologically appropriate, unified averages can still be sensitive to task mix.
+
+\subsection{Construct Validity}
+Current extraction coverage is small (6 tasks), limiting confidence on extraction generalization and making percent improvements unstable.
+
+\subsection{External Validity}
+Task sources include LegalBench-style reasoning and selected tender/contract tasks; transfer to other legal domains (e.g., litigation, tax, multilingual statutes) remains unverified.
+
+\section{Limitations}
+Current limitations are substantial:
+\begin{itemize}[leftmargin=*]
+  \item Extreme task imbalance (reasoning dominates extraction).
+  \item Limited extraction benchmark depth and diversity.
+  \item Dependence on heuristic token-based cost estimates.
+  \item Limited human-expert adjudication of borderline outputs.
+\end{itemize}
+
+\section{Ethical and Deployment Considerations}
+This system is designed for decision support, not automated legal advice. Deployment should include:
+\begin{itemize}[leftmargin=*]
+  \item human review for high-impact recommendations,
+  \item logging of route decisions and model outputs,
+  \item explicit uncertainty handling (including abstention paths),
+  \item periodic drift monitoring and re-calibration.
+\end{itemize}
+
+\section{Reproducibility Notes}
+Core implementation artifacts include:
+\begin{itemize}[leftmargin=*]
+  \item \texttt{intelligent\_router.py} for rule routing,
+  \item \texttt{run\_experiment.py} for baseline generation,
+  \item \texttt{run\_hybrid\_system.py} for routed execution,
+  \item \texttt{evaluate\_research\_ready.py} for policy comparisons and ablations,
+  \item \texttt{results.json} and \texttt{outputs/research\_eval/*} for reported metrics.
+\end{itemize}
+
+\section{Future Work}
+Before camera-ready submission, planned extensions are:
+\begin{enumerate}[leftmargin=*]
+  \item expand extraction tasks and adversarial edge cases,
+  \item add calibration-aware routing and abstention,
+  \item run component-level ablations under multiple seeds,
+  \item perform structured legal expert error analysis,
+  \item evaluate robustness under temporal and domain shift.
+\end{enumerate}
+
+\section{Conclusion}
+LAMMR demonstrates that legal AI performance is strongly influenced by routing policy, not only model scale. A hybrid approach that combines interpretable rules with learned routing improves the practical score-cost frontier while retaining auditability. Current results are promising but preliminary; stronger extraction coverage, richer human evaluation, and robustness testing are required for high-trust deployment.

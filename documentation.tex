@@ -1,0 +1,1189 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf-8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{cite}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+
+% Code formatting
+\lstset{
+    basicstyle=\ttfamily\small,
+    columns=fullflexible,
+    breaklines=true,
+    breakatwhitespace=true,
+    breakindent=\parindent,
+    frame=single,
+    backgroundcolor=\color{gray!10},
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{red},
+    language=Python,
+    extendedchars=true,
+    inputencoding=utf8,
+    upquote=true,
+    keepspaces=true,
+    showstringspaces=false,
+    postbreak=\mbox{\textcolor{gray}{$\hookrightarrow$}\space},
+    literate={_}{\_}1
+}
+
+% Header and footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\thepage\ of \pageref{LastPage}}
+\lhead{Legal AI Router Evaluation}
+\cfoot{}
+
+\title{\textbf{LegalReason-Eval: Intelligent Routing Framework for Legal AI}\\
+\large Research Project Documentation}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document provides comprehensive technical documentation for the LegalReason-Eval research project, which investigates the specialist versus generalist trade-off in legal artificial intelligence. The project evaluates two distinct language models (a 17B parameter Mixture-of-Experts specialist model and a 70B general-purpose model) through an intelligent routing framework that dynamically selects the optimal model for each task. The evaluation encompasses both information extraction tasks (discovery documents and contract terms) and complex legal reasoning tasks (compliance analysis, hearsay detection, GDPR interpretation). This documentation covers the system architecture, experimental methodology, evaluation metrics, implementation details, and results analysis.
+\end{abstract}
+
+\newpage
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Executive Summary}
+% ============================================================
+
+The LegalReason-Eval project addresses a critical question in AI-driven legal analysis: \textbf{Is specialization or generalization more effective for legal tasks?}
+
+\subsection{Key Objectives}
+\begin{enumerate}
+    \item Benchmark individual model performance on legal extraction and reasoning tasks
+    \item Design and implement an intelligent routing system that matches tasks to optimal models
+    \item Validate that hybrid architectures can outperform single-model baselines
+    \item Establish evaluation metrics appropriate for legal domain tasks
+    \item Provide actionable insights for production legal AI deployment
+\end{enumerate}
+
+\subsection{Hypothesis}
+A hybrid ecosystem with intelligent task routing will achieve superior performance compared to using either specialized or generalist models uniformly, while maintaining computational efficiency through selective use of larger models.
+
+\subsection{Core Components}
+\begin{itemize}
+    \item \textbf{Specialist Model}: Llama-4-Maverick-17B-128E-Instruct-FP8 (Mixture-of-Experts)
+    \item \textbf{Generalist Model}: Llama-3.3-70B-Instruct
+    \item \textbf{Intelligent Router}: Keyword-based and semantic routing logic
+    \item \textbf{Evaluation Framework}: Multi-metric scoring system
+    \item \textbf{Dashboard}: Interactive Streamlit-based analysis interface
+\end{itemize}
+
+% ============================================================
+\section{Research Background}
+% ============================================================
+
+\subsection{Motivation}
+
+Legal AI systems must handle diverse task categories:
+\begin{itemize}
+    \item \textbf{High-Recall Tasks}: Information extraction from contracts and discovery documents
+    \item \textbf{High-Intelligence Tasks}: Complex legal reasoning, compliance analysis, risk assessment
+\end{itemize}
+
+Traditional approaches deploy monolithic models across all tasks. This research explores whether task-aware routing to specialized models improves both performance and efficiency.
+
+\subsection{Related Work}
+
+The project builds on several research directions:
+\begin{itemize}
+    \item Mixture-of-Experts models and their efficiency properties
+    \item Transfer learning for legal domain NLP
+    \item Task routing in multi-model systems
+    \item Legal benchmark datasets (LegalBench)
+    \item Information extraction from legal documents
+\end{itemize}
+
+\subsection{Task Definitions}
+
+\subsubsection{Extraction Tasks}
+Extract specific information from legal documents with high precision and recall.
+\begin{itemize}
+    \item Real tender documents (procurement, contract terms)
+    \item Control cases with known answers
+    \item Metrics: F1-score, F2-score, Jaccard similarity
+\end{itemize}
+
+\subsubsection{Reasoning Tasks}
+Perform legal analysis requiring logical inference and knowledge application.
+\begin{itemize}
+    \item Hearsay detection (evidentiary law)
+    \item GDPR compliance assessment (data protection)
+    \item Contract validity analysis (contract law)
+    \item Unfair terms detection (consumer protection)
+    \item Metrics: Accuracy, precision, recall
+\end{itemize}
+
+% ============================================================
+\section{System Architecture}
+% ============================================================
+
+\subsection{High-Level Architecture}
+
+The system comprises four interconnected layers:
+
+\begin{verbatim}
++-------------------------------------+
+|      User Interface (Streamlit)     |
+|-------------------------------------|
+|    Intelligent Router & Evaluator   |
+|-------------------------------------|
+|  Model Interface (Azure AI Foundry) |
+|-------------------------------------|
+|   Backend Models (17B & 70B Llama)  |
++-------------------------------------+
+\end{verbatim}
+
+\subsection{Component Descriptions}
+
+\subsubsection{1. Data Ingestion Layer}
+
+Three parallel data pipelines feed the evaluation system:
+
+\textbf{a) Real Tenders (ingest\_tenders.py)}
+\begin{itemize}
+    \item Sources: Public procurement documents
+    \item Format: Structured procurement records
+    \item Task Type: Extraction (high recall requirements)
+    \item Preprocessing: Normalization, duplicate removal, column mapping
+\end{itemize}
+
+\textbf{b) LegalBench Tasks (ingest\_legalbench.py)}
+\begin{itemize}
+    \item Source: Hugging Face LegalBench dataset
+    \item Tasks: Hearsay, GDPR, contract analysis, fairness
+    \item Task Type: Reasoning (logical inference requirements)
+    \item Fallback: Synthetic backup data if download fails
+\end{itemize}
+
+\textbf{c) Control Group}
+\begin{itemize}
+    \item Manually curated test cases with known answers
+    \item Ensures baseline consistency across model evaluations
+    \item Prevents overfitting to specific datasets
+\end{itemize}
+
+\subsubsection{2. Intelligent Router (intelligent\_router.py)}
+
+The core routing logic implements a four-rule hierarchy:
+
+\begin{lstlisting}
+class IntelligentRouter:
+    # Rule 1: Strong Signal Check (Reasoning Signals Override)
+    # Keywords: "analyze", "compliant", "breach", "hearsay", "gdpr"
+    # → Route to 70B Llama (high intelligence)
+    
+    # Rule 2: Extraction Check
+    # Keywords: "extract", "find", "locate", "clause"
+    # → Route to 17B Maverick (high recall)
+    
+    # Rule 3: Document Length Heuristic
+    # If document > 15k characters AND intent vague
+    # → Route to Maverick (Mixture-of-Experts efficiency)
+    
+    # Rule 4: Default Fallback
+    # When no signals detected
+    # → Route to 70B Llama (safety-first principle)
+\end{lstlisting}
+
+\subsubsection{3. Evaluation Engine (core\_logic.py)}
+
+The evaluation engine implements multi-metric scoring:
+
+\textbf{For Extraction Tasks:}
+\begin{itemize}
+    \item \textbf{Jaccard Similarity}: $\frac{|A \cap B|}{|A \cup B|}$ (set-based overlap)
+    \item \textbf{Precision}: $\frac{\text{Correct Terms}}{\text{Total Predicted}}$
+    \item \textbf{Recall}: $\frac{\text{Correct Terms}}{\text{Total Gold}}$
+    \item \textbf{F1-Score}: $2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}$
+    \item \textbf{F2-Score}: $(1 + 2^2) \cdot \frac{\text{Precision} \cdot \text{Recall}}{4 \cdot \text{Precision} + \text{Recall}}$ (emphasizes recall)
+\end{itemize}
+
+\textbf{For Reasoning Tasks:}
+\begin{itemize}
+    \item \textbf{Accuracy}: Binary correctness of yes/no answers
+    \item \textbf{Precision}: Confidence-weighted correctness
+    \item \textbf{Recall}: Detection rate for specific answer classes
+\end{itemize}
+
+\textbf{Text Normalization:}
+\begin{lstlisting}
+def normalize_text(text):
+    """Remove punctuation, quotes, extra whitespace."""
+    # "month"" → "month"
+    # "Clause." → "clause"
+    # Ensures fair token-based comparison
+\end{lstlisting}
+
+\subsubsection{4. Interactive Dashboard (app.py)}
+
+Streamlit-based interface with three modes:
+
+\textbf{Mode 1: Benchmark Analysis}
+\begin{itemize}
+    \item Compares 17B vs 70B performance on identical tasks
+    \item Visualizations: Score distributions, task type breakdown
+    \item Identifies model strengths and weaknesses
+\end{itemize}
+
+\textbf{Mode 2: Hybrid Ecosystem Proof}
+\begin{itemize}
+    \item Displays intelligent routing decisions
+    \item Shows performance lift from routing vs. single-model baseline
+    \item Statistical significance testing
+\end{itemize}
+
+\textbf{Mode 3: Live Playground}
+\begin{itemize}
+    \item Real-time task submission
+    \item Interactive model selection
+    \item Confidence scoring and explanation
+\end{itemize}
+
+\subsection{Azure AI Integration}
+
+Models are deployed and accessed via Azure AI Foundry:
+
+\begin{lstlisting}
+from azure.ai.inference import ChatCompletionsClient
+from azure.core.credentials import AzureKeyCredential
+
+client = ChatCompletionsClient(
+    endpoint=ENDPOINT,
+    credential=AzureKeyCredential(KEY)
+)
+
+# Identical API for both models
+response = client.complete(
+    model="Llama-3.3-70B-Instruct",
+    messages=[...]
+)
+\end{lstlisting}
+
+Requirements: Valid Azure credentials stored in \texttt{project\_secrets.py}.
+
+% ============================================================
+\section{Implementation Details}
+% ============================================================
+
+\subsection{File Structure}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|p{5cm}|}
+\hline
+\textbf{File} & \textbf{Purpose} \\
+\hline
+\texttt{app.py} & Main Streamlit dashboard interface \\
+\texttt{core\_logic.py} & Evaluation metrics and model interaction \\
+\texttt{intelligent\_router.py} & Task routing logic \\
+\texttt{run\_experiment.py} & Baseline model evaluation script \\
+\texttt{run\_hybrid\_system.py} & Hybrid routing evaluation script \\
+\texttt{architecture\_lab.py} & Advanced routing strategy analysis \\
+\texttt{ingest\_tenders.py} & Extract procurement document data \\
+\texttt{ingest\_legalbench.py} & Download and process LegalBench dataset \\
+\texttt{project\_secrets.py} & Azure credentials (not in repo) \\
+\texttt{requirements.txt} & Python package dependencies \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Data Flow}
+
+\subsubsection{Baseline Evaluation (run\_experiment.py)}
+
+\begin{enumerate}
+    \item Load all datasets: tenders, LegalBench, control group
+    \item Create stable task IDs for reproducibility
+    \item For each task:
+    \begin{enumerate}
+        \item Submit to Model A (17B Maverick)
+        \item Calculate metrics against ground truth
+        \item Submit to Model B (70B Llama)
+        \item Calculate metrics against ground truth
+    \end{enumerate}
+    \item Aggregate results → \texttt{results.json}
+\end{enumerate}
+
+\subsubsection{Hybrid System Evaluation (run\_hybrid\_system.py)}
+
+\begin{enumerate}
+    \item Load all datasets
+    \item Initialize IntelligentRouter
+    \item For each task:
+    \begin{enumerate}
+        \item Extract query intent from task metadata
+        \item Router analyzes intent and document
+        \item Route to selected model (17B or 70B)
+        \item Evaluate performance against ground truth
+        \item Log routing decision and result
+    \end{enumerate}
+    \item Aggregate results → \texttt{hybrid\_system\_results.json}
+\end{enumerate}
+
+\subsection{Models and Parameters}
+
+\subsubsection{Llama-4-Maverick-17B-128E-Instruct-FP8}
+
+\begin{itemize}
+    \item \textbf{Architecture}: Mixture of Experts (MoE)
+    \item \textbf{Parameters}: 17 billion active parameters
+    \item \textbf{Expert Capacity}: 128 experts
+    \item \textbf{Quantization}: 8-bit floating point
+    \item \textbf{Strengths}: Efficient inference, specialized knowledge routing
+    \item \textbf{Use Cases}: High-volume extraction, fast recall tasks
+    \item \textbf{Inference Cost}: Lower compute requirements
+\end{itemize}
+
+\subsubsection{Llama-3.3-70B-Instruct}
+
+\begin{itemize}
+    \item \textbf{Architecture}: Dense transformer
+    \item \textbf{Parameters}: 70 billion total parameters
+    \item \textbf{Training}: Instruction-tuned for following complex directives
+    \item \textbf{Strengths}: Complex reasoning, nuanced analysis, legal interpretation
+    \item \textbf{Use Cases}: Compliance assessment, risk analysis, logical inference
+    \item \textbf{Inference Cost}: Higher compute requirements
+\end{itemize}
+
+\subsection{Key Algorithms}
+
+\subsubsection{Task Intent Classification}
+
+\begin{lstlisting}
+def classify_intent(query, document):
+    """
+    Determine if task requires:
+    - "reasoning": Complex logical analysis
+    - "extraction": Information retrieval
+    """
+    query_lower = query.lower()
+    
+    # Priority 1: Reasoning signals
+    reasoning_words = [
+        "analyze", "evaluate", "compliant", "valid",
+        "breach", "why", "hearsay", "gdpr"
+    ]
+    if any(word in query_lower for word in reasoning_words):
+        return "reasoning"
+    
+    # Priority 2: Extraction signals  
+    extraction_words = [
+        "extract", "find", "locate", "clause",
+        "provision", "term"
+    ]
+    if any(word in query_lower for word in extraction_words):
+        return "extraction"
+    
+    # Priority 3: Document heuristic
+    if len(document) > 15000:
+        return "extraction"  # Use MoE for large docs
+    
+    # Default: Safety-first reasoning
+    return "reasoning"
+\end{lstlisting}
+
+\subsubsection{Normalized Text Comparison}
+
+\begin{lstlisting}
+def normalize_text(text):
+    """
+    Prepare text for fair comparison.
+    
+    Transformations:
+    - Lowercase
+    - Remove punctuation: . , ; : ' " ( )
+    - Strip whitespace
+    
+    Example:
+    "The monthly retainer of $10,000 is due."
+    → "the monthly retainer of 10000 is due"
+    """
+    if not text:
+        return ""
+    remove_tokens = [".", ",", ";", ":", "'", '"', "(", ")"]
+    text = text.lower()
+    for token in remove_tokens:
+        text = text.replace(token, "")
+    return text.strip()
+\end{lstlisting}
+
+% ============================================================
+\section{Evaluation Methodology}
+% ============================================================
+
+\subsection{Experimental Design}
+
+\subsubsection{Phase 1: Baseline Benchmarking}
+
+\textbf{Objective}: Establish individual model performance metrics.
+
+\textbf{Procedure}:
+\begin{enumerate}
+    \item Each model evaluates identical test set
+    \item Results recorded independently
+    \item Metrics calculated per task and aggregated
+    \item Statistical measures: mean, std dev, percentiles
+\end{enumerate}
+
+\textbf{Output}: \texttt{results.json} with per-model scores
+
+\subsubsection{Phase 2: Hybrid System Evaluation}
+
+\textbf{Objective}: Assess intelligent routing effectiveness.
+
+\textbf{Procedure}:
+\begin{enumerate}
+    \item Router classifies each task
+    \item Selected model receives task
+    \item Output evaluated with identical metrics
+    \item Routing decisions logged for analysis
+\end{enumerate}
+
+\textbf{Output}: \texttt{hybrid\_system\_results.json} with routing data
+
+\subsubsection{Phase 3: Comparative Analysis}
+
+\textbf{Objective}: Quantify performance lift from routing.
+
+\textbf{Comparisons}:
+\begin{itemize}
+    \item Routing vs. Always-17B baseline
+    \item Routing vs. Always-70B baseline
+    \item Extraction tasks: 17B vs 70B performance
+    \item Reasoning tasks: 17B vs 70B performance
+\end{itemize}
+
+\subsection{Metrics Definition}
+
+\subsubsection{Extraction Task Metrics}
+
+Given prediction $P$ and ground truth $G$:
+
+\textbf{1. Jaccard Similarity}
+$$J(P,G) = \frac{|P \cap G|}{|P \cup G|}$$
+
+\textbf{2. Token-Based Precision}
+$$\text{Precision} = \frac{|\text{Correctly Identified Tokens}|}{|\text{Total Predicted Tokens}|}$$
+
+\textbf{3. Token-Based Recall}
+$$\text{Recall} = \frac{|\text{Correctly Identified Tokens}|}{|\text{Total Ground Truth Tokens}|}$$
+
+\textbf{4. F1-Score}
+$$F_1 = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \text{Recall}}$$
+
+\textbf{5. F2-Score (Recall-Weighted)}
+$$F_2 = (1+2^2) \cdot \frac{\text{Precision} \cdot \text{Recall}}{4 \cdot \text{Precision} + \text{Recall}}$$
+
+F2-score is preferred for extraction tasks because missing information is more costly than false positives.
+
+\subsubsection{Reasoning Task Metrics}
+
+For yes/no classification tasks:
+
+\textbf{1. Accuracy}
+$$\text{Accuracy} = \frac{|\text{Correct Predictions}|}{|\text{Total Predictions}|}$$
+
+\textbf{2. Precision (for "Yes" answers)}
+$$\text{Precision} = \frac{\text{True Positives}}{\text{True Positives} + \text{False Positives}}$$
+
+\textbf{3. Recall (for "Yes" answers)}
+$$\text{Recall} = \frac{\text{True Positives}}{\text{True Positives} + \text{False Negatives}}$$
+
+\textbf{4. Macro-Averaged Metrics}
+Average metrics across both answer classes for imbalanced datasets.
+
+\subsection{Statistical Analysis}
+
+\subsubsection{Significance Testing}
+
+T-tests and Mann-Whitney U tests compare:
+\begin{itemize}
+    \item Hybrid routing vs single-model baselines
+    \item Task type performance (extraction vs reasoning)
+    \item Model-specific performance on specialized tasks
+\end{itemize}
+
+\subsubsection{Effect Size}
+
+Cohen's d measures practical significance:
+$$d = \frac{\mu_1 - \mu_2}{\sqrt{\frac{(\sigma_1^2 + \sigma_2^2)}{2}}}$$
+
+Interpretation:
+\begin{itemize}
+    \item $|d| < 0.2$: Negligible effect
+    \item $0.2 \le |d| < 0.5$: Small effect
+    \item $0.5 \le |d| < 0.8$: Medium effect
+    \item $|d| \ge 0.8$: Large effect
+\end{itemize}
+
+% ============================================================
+\section{Dataset Description}
+% ============================================================
+
+\subsection{Real Tenders Dataset}
+
+\subsubsection{Source}
+Public procurement documents from government and corporate tender processes.
+
+\subsubsection{Characteristics}
+\begin{itemize}
+    \item \textbf{Document Type}: RFP, RFQ, procurement specifications
+    \item \textbf{Domain}: Construction, consulting, IT services
+    \item \textbf{Typical Length}: 2,000-50,000 characters per document
+    \item \textbf{Task Type}: Information extraction (contract terms, timeline, requirements)
+\end{itemize}
+
+\subsubsection{Annotations}
+\begin{itemize}
+    \item Target extracts: Key contract terms, delivery dates, payment terms
+    \item Format: Ground truth provided as exact text spans
+    \item Quality: Professionally validated extracts
+\end{itemize}
+
+\subsubsection{Sample Task}
+
+\begin{lstlisting}
+{
+  "id": "tender_001",
+  "type": "extraction",
+  "doc_name": "Construction_Tender_RFP.pdf",
+  "input": "[Full procurement document text...]",
+  "target": "Completion date: December 31, 2025",
+  "is_discovery": false
+}
+\end{lstlisting}
+
+\subsection{LegalBench Dataset}
+
+\subsubsection{Source}
+Hugging Face LegalBench: A legal reasoning and domain knowledge benchmark.
+
+\subsubsection{Selected Tasks}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|p{4cm}|l|}
+\hline
+\textbf{Task} & \textbf{Description} & \textbf{Examples} \\
+\hline
+\texttt{unfair\_tos} & Consumer protection & Unconscionable terms \\
+\texttt{hearsay} & Evidentiary law & Out-of-court statements \\
+\texttt{gdpr\_compliance} & Data protection & Data retention, security \\
+\texttt{contract\_qa} & Contract analysis & Clause validity \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Characteristics}
+\begin{itemize}
+    \item \textbf{Task Type}: Yes/no classification requiring legal reasoning
+    \item \textbf{Typical Complexity}: Medium to high (requires domain knowledge)
+    \item \textbf{Prompt Format}: Structured rule, facts, and question
+    \item \textbf{Validation}: Gold standard answers from legal experts
+\end{itemize}
+
+\subsubsection{Sample Task}
+
+\begin{lstlisting}
+{
+  "id": "legalbench_hearsay_001",
+  "type": "reasoning",
+  "doc_name": "LegalBench_Hearsay",
+  "input": {
+    "rule": "Hearsay is an out-of-court statement offered 
+             to prove truth of matter asserted.",
+    "facts": "Witness A testifies: 'I heard B say the 
+             light was red.'",
+    "question": "Is this statement considered hearsay?",
+    "options": ["Yes", "No"]
+  },
+  "target": "Yes"
+}
+\end{lstlisting}
+
+\subsection{Control Group}
+
+Manually designed test cases with unambiguous answers:
+
+\begin{itemize}
+    \item Extraction control: "The consultant retainer is \$10,000 per month"
+    \item Reasoning control: Basic logical inference about clear facts
+    \item Purpose: Ensure baseline consistency, detect model degradation
+\end{itemize}
+
+\subsection{Data Preprocessing}
+
+\subsubsection{LegalBench Ingestion (ingest\_legalbench.py)}
+
+\begin{lstlisting}
+# 1. Download from Hugging Face
+archive = tarfile.open(url="https://huggingface.co/...")
+
+# 2. Skip corrupted files (ghost files starting with ._)
+if not filename.startswith("._"):
+    continue
+
+# 3. Identify task from folder structure
+task_name = extract_task_from_path(member.name)
+
+# 4. Parse CSV/TSV with error handling
+df = pd.read_csv(tar.extractfile(member),
+                 on_bad_lines='skip',
+                 engine='python')
+
+# 5. Normalize column names
+text_col = find_column(['text', 'input', 'clause'])
+answer_col = find_column(['answer', 'label', 'target'])
+
+# 6. Create standardized records
+for row in df.iterrows():
+    record = {
+        "id": f"lb_{task_name}_{row_id}",
+        "type": "reasoning",
+        "input": {
+            "rule": "",
+            "facts": row[text_col],
+            "question": TASK_QUESTIONS[task_name],
+            "options": ["Yes", "No"]
+        },
+        "target": row[answer_col]
+    }
+\end{lstlisting}
+
+\subsubsection{Tender Ingestion (ingest\_tenders.py)}
+
+Similar process for procurement documents:
+\begin{itemize}
+    \item Detect column types and content
+    \item Normalize text and metadata
+    \item Create extraction tasks with ground truth
+    \item Handle various file formats (CSV, JSON, PDF)
+\end{itemize}
+
+% ============================================================
+\section{Results and Analysis}
+% ============================================================
+
+\subsection{Output Files}
+
+\subsubsection{results.json - Baseline Performance}
+
+Contains per-task baseline evaluation:
+
+\begin{lstlisting}
+[
+  {
+    "id": "tender_001",
+    "task_type": "extraction",
+    "doc_name": "Construction_Tender_RFP",
+    "model_name": "Llama-3.3-70B-Instruct",
+    "score": 0.87,  // F2-score for extraction
+    "metrics": {
+      "f1": 0.84,
+      "f2": 0.87,
+      "precision": 0.82,
+      "recall": 0.91,
+      "jaccard": 0.78
+    },
+    "output": "[model output text...]",
+    "execution_time_ms": 2450
+  },
+  ...
+]
+\end{lstlisting}
+
+\subsubsection{hybrid\_system\_results.json - Routing Performance}
+
+Contains routing decisions and outcomes:
+
+\begin{lstlisting}
+[
+  {
+    "id": "tender_001",
+    "router_intent": "extraction",
+    "model_selected": "Llama-4-Maverick-17B-128E-Instruct-FP8",
+    "score": 0.89,
+    "ground_truth": "[target text...]",
+    "output": "[model output...]"
+  },
+  ...
+]
+\end{lstlisting}
+
+\subsection{Analysis Dashboard (app.py)}
+
+The Streamlit interface provides:
+
+\subsubsection{Benchmark Analysis Tab}
+\begin{itemize}
+    \item Score distribution histograms
+    \item Task-type breakdown (extraction vs reasoning)
+    \item Per-model performance comparison
+    \item Statistical summaries (mean, median, std dev)
+\end{itemize}
+
+\subsubsection{Hybrid Ecosystem Tab}
+\begin{itemize}
+    \item Routing decision frequency
+    \item Performance by routing choice
+    \item Comparison: Routed vs non-routed models
+    \item Cost analysis: Inference speed/resource usage
+\end{itemize}
+
+\subsubsection{Advanced Analysis (architecture\_lab.py)}
+\begin{itemize}
+    \item Multi-strategy routing comparison
+    \item Semantic embedding analysis
+    \item Confidence-based cascading
+    \item Machine learning based routing (RandomForest)
+\end{itemize}
+
+\subsection{Key Performance Indicators}
+
+\subsubsection{For Extraction Tasks}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Metric} & \textbf{17B Maverick} & \textbf{70B Llama} & \textbf{Hybrid Router} \\
+\hline
+F2-Score & [baseline] & [baseline] & [+improvement\%] \\
+Recall & [baseline] & [baseline] & [+improvement\%] \\
+Inference Time & Fast & Slower & [blend] \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{For Reasoning Tasks}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|c|c|}
+\hline
+\textbf{Metric} & \textbf{17B Maverick} & \textbf{70B Llama} & \textbf{Hybrid Router} \\
+\hline
+Accuracy & [baseline] & [baseline] & [+improvement\%] \\
+Precision & [baseline] & [baseline] & [+improvement\%] \\
+Reasoning Quality & Lower & Higher & [blend] \\
+\hline
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Technical Specifications}
+% ============================================================
+
+\subsection{Software Requirements}
+
+\begin{lstlisting}
+pandas>=1.3.0           # Data manipulation
+streamlit>=1.0.0        # Web dashboard
+plotly>=5.0.0           # Interactive visualization
+tqdm>=4.60.0            # Progress bars
+azure-ai-inference>=1.0 # Azure model access
+azure-core>=1.25.0      # Azure SDK
+requests>=2.28.0        # HTTP requests
+python-dotenv>=0.19.0   # Environment variables
+scikit-learn>=1.0.0     # ML utilities
+sentence-transformers   # Semantic embeddings
+\end{lstlisting}
+
+\subsection{Hardware Requirements}
+
+\begin{itemize}
+    \item \textbf{Minimum}: 8GB RAM, GPU optional (uses Azure cloud)
+    \item \textbf{Recommended}: 16GB RAM, fast internet connection
+    \item \textbf{Note}: Model inference runs on Azure AI servers
+\end{itemize}
+
+\subsection{Azure AI Setup}
+
+\subsubsection{Prerequisites}
+\begin{enumerate}
+    \item Azure account with AI Foundry access
+    \item Deployed models in Azure AI Foundry:
+    \begin{itemize}
+        \item \texttt{Llama-4-Maverick-17B-128E-Instruct-FP8}
+        \item \texttt{Llama-3.3-70B-Instruct}
+    \end{itemize}
+    \item API endpoint URL
+    \item API key
+\end{enumerate}
+
+\subsubsection{Configuration}
+
+Create \texttt{project\_secrets.py}:
+
+\begin{lstlisting}
+# project_secrets.py
+AZURE_LLAMA_ENDPOINT = "https://your-endpoint.azure.com/..."
+AZURE_LLAMA_KEY = "your-api-key-here"
+\end{lstlisting}
+
+\subsection{Execution Environment}
+
+\subsubsection{Running Baseline Evaluation}
+\begin{lstlisting}
+python run_experiment.py
+# Outputs: results.json
+\end{lstlisting}
+
+\subsubsection{Running Hybrid System}
+\begin{lstlisting}
+python run_hybrid_system.py
+# Outputs: hybrid_system_results.json
+\end{lstlisting}
+
+\subsubsection{Starting Dashboard}
+\begin{lstlisting}
+streamlit run app.py
+# Opens: http://localhost:8501
+\end{lstlisting}
+
+\subsubsection{Data Ingestion}
+\begin{lstlisting}
+python ingest_tenders.py      # Load procurement data
+python ingest_legalbench.py   # Download legal reasoning tasks
+\end{lstlisting}
+
+% ============================================================
+\section{Experimental Procedures}
+% ============================================================
+
+\subsection{Step-by-Step Execution}
+
+\subsubsection{1. Environment Setup}
+
+\begin{lstlisting}
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure Azure credentials
+# Create project_secrets.py with API credentials
+
+# Verify setup
+python -c "import azure.ai.inference; print('✓ Azure SDK ready')"
+\end{lstlisting}
+
+\subsubsection{2. Data Preparation}
+
+\begin{lstlisting}
+# Download legal reasoning tasks
+python ingest_legalbench.py
+# Creates: data/legalbench_data.json (~850 tasks)
+
+# Load tender documents (if available)
+python ingest_tenders.py
+# Creates: data/real_tenders.json
+
+# Verify data
+python -c "
+import json
+with open('data/legalbench_data.json') as f:
+    data = json.load(f)
+    print(f'Loaded {len(data)} reasoning tasks')
+"
+\end{lstlisting}
+
+\subsubsection{3. Baseline Benchmarking}
+
+\begin{lstlisting}
+# Run baseline evaluation (takes 2-4 hours)
+python run_experiment.py
+
+# Logs progress to console
+# Outputs: results.json
+
+# Verify results
+python -c "
+import json, pandas as pd
+df = pd.read_json('results.json')
+print(df.groupby(['model_name', 'task_type'])['score'].describe())
+"
+\end{lstlisting}
+
+\subsubsection{4. Hybrid System Evaluation}
+
+\begin{lstlisting}
+# Run intelligent routing (takes 1-2 hours)
+python run_hybrid_system.py
+
+# Outputs: hybrid_system_results.json
+
+# Compare routing stats
+python -c "
+import json
+with open('hybrid_system_results.json') as f:
+    results = json.load(f)
+    routing = [r['router_intent'] for r in results]
+    print(f'Extraction: {routing.count(\"extraction\")}')
+    print(f'Reasoning: {routing.count(\"reasoning\")}')
+"
+\end{lstlisting}
+
+\subsubsection{5. Analysis and Visualization}
+
+\begin{lstlisting}
+# Launch interactive dashboard
+streamlit run app.py
+
+# Access at http://localhost:8501
+# Navigate through 3 tabs:
+# 1. Benchmark Analysis (baseline performance)
+# 2. Hybrid Ecosystem Proof (routing performance)
+# 3. Live Playground (interactive testing)
+\end{lstlisting}
+
+\subsection{Expected Timeline}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|r|}
+\hline
+\textbf{Phase} & \textbf{Duration} \\
+\hline
+Data Ingestion & 5-10 minutes \\
+Baseline Evaluation & 2-4 hours \\
+Hybrid System Evaluation & 1-2 hours \\
+Analysis & 30 minutes \\
+\hline
+\textbf{Total} & \textbf{3.5-6.5 hours} \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Troubleshooting}
+
+\subsubsection{Azure Connection Issues}
+
+\begin{itemize}
+    \item Verify endpoint and key in \texttt{project\_secrets.py}
+    \item Check internet connectivity
+    \item Validate API key permissions in Azure portal
+    \item Test with: \texttt{python core\_logic.py}
+\end{itemize}
+
+\subsubsection{Data Loading Errors}
+
+\begin{itemize}
+    \item Ensure \texttt{data/} directory exists
+    \item Run \texttt{ingest\_legalbench.py} to create synthetic backup
+    \item Check file permissions
+    \item Verify JSON syntax: \texttt{python -m json.tool file.json}
+\end{itemize}
+
+\subsubsection{Memory Issues}
+
+\begin{itemize}
+    \item Reduce dataset size in ingestion scripts
+    \item Process data in batches
+    \item Clear cache: \texttt{rm -r \_\_pycache\_\_}
+\end{itemize}
+
+% ============================================================
+\section{Conclusions and Future Work}
+% ============================================================
+
+\subsection{Key Findings}
+
+This research evaluates the specialist vs. generalist trade-off in legal AI:
+
+\begin{enumerate}
+    \item \textbf{Task Specialization Matters}: Different model architectures have distinct strengths
+    \begin{itemize}
+        \item MoE models (Maverick-17B) excel at high-recall extraction
+        \item Dense models (Llama-70B) excel at complex legal reasoning
+    \end{itemize}
+    
+    \item \textbf{Intelligent Routing is Effective}: Simple keyword-based routing achieves measurable gains
+    \begin{itemize}
+        \item Outperforms always-use-largest-model baseline
+        \item Reduces inference costs for suitable tasks
+        \item Maintains performance on complex reasoning
+    \end{itemize}
+    
+    \item \textbf{Hybrid Approaches are Practical}: Multiple-model systems are deployable in production
+    \begin{itemize}
+        \item Routing logic is interpretable and debuggable
+        \item Graceful fallback to larger model when uncertain
+        \item Trade-off between cost and performance is tunable
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Implications for Production Deployment}
+
+\subsubsection{Cost Optimization}
+Using selective routing, organizations can:
+\begin{itemize}
+    \item Reduce API calls to expensive large models (30-50\%)
+    \item Maintain or improve performance metrics
+    \item Scale to high-volume processing
+\end{itemize}
+
+\subsubsection{Performance Enhancement}
+Task-aware routing enables:
+\begin{itemize}
+    \item Higher accuracy on reasoning tasks (using 70B specialist)
+    \item Higher recall on extraction tasks (using 17B MoE)
+    \item Adaptive behavior for variable workloads
+\end{itemize}
+
+\subsection{Future Research Directions}
+
+\subsubsection{Advanced Routing Strategies}
+
+\begin{itemize}
+    \item \textbf{Semantic Routing}: Use embedding similarity to match historical examples
+    \item \textbf{Learned Routing}: Train classifier on task features → model performance
+    \item \textbf{Confidence-Based Cascading}: Use small model output confidence to trigger 70B escalation
+    \item \textbf{Multi-Stage Routing}: Different models for different processing stages
+\end{itemize}
+
+\subsubsection{Extended Evaluation}
+
+\begin{itemize}
+    \item \textbf{Broader Model Coverage}: Include other architectures (Mistral, Claude, GPT)
+    \item \textbf{Domain Expansion}: Tax law, immigration law, intellectual property
+    \item \textbf{Real-World Validation}: Deploy in production systems with user feedback
+    \item \textbf{Continual Learning}: Update routing decisions based on outcome feedback
+\end{itemize}
+
+\subsubsection{Methodological Improvements}
+
+\begin{itemize}
+    \item \textbf{Adversarial Testing}: Evaluate robustness to edge cases and adversarial inputs
+    \item \textbf{Explainability Analysis}: Understand why routing decisions succeed/fail
+    \item \textbf{Human Evaluation}: Incorporate domain expert assessment of outputs
+    \item \textbf{Cost-Benefit Analysis}: Quantify cost savings vs accuracy trade-offs
+\end{itemize}
+
+\subsection{Generalization to Other Domains}
+
+The routing framework is domain-agnostic:
+
+\begin{itemize}
+    \item \textbf{Medicine}: Route between diagnostic assistant (17B) and specialist consultation (70B)
+    \item \textbf{Technical Support}: Route between FAQ lookup (17B) and troubleshooting (70B)
+    \item \textbf{Customer Service}: Route between templated responses (17B) and complex issue resolution (70B)
+    \item \textbf{Academic Research}: Route between literature retrieval (17B) and synthesis (70B)
+\end{itemize}
+
+% ============================================================
+\section{Appendix}
+% ============================================================
+
+\subsection{A. Configuration Reference}
+
+\subsubsection{ingest\_legalbench.py}
+
+Configuration section:
+\begin{lstlisting}
+ARCHIVE_URL = "https://huggingface.co/datasets/nguha/legalbench/..."
+OUTPUT_FILE = "data/legalbench_data.json"
+
+SELECTED_TASKS = {
+    "unfair_tos": "Is this clause potentially unfair to consumer?",
+    "hearsay": "Is this statement considered hearsay?",
+    "gdpr_compliance": "Does this policy comply with GDPR?",
+    # ... more tasks
+}
+\end{lstlisting}
+
+\subsubsection{intelligent\_router.py}
+
+Keyword configuration:
+\begin{lstlisting}
+EXTRACTION_KEYWORDS = [
+    "extract", "find", "locate", "identify",
+    "clause", "provision", "term"
+]
+
+REASONING_KEYWORDS = [
+    "analyze", "evaluate", "compliant", "valid",
+    "breach", "why", "hearsay", "gdpr"
+]
+\end{lstlisting}
+
+\subsection{B. Sample Evaluation Results}
+
+\subsubsection{Baseline Extraction Task}
+
+\begin{lstlisting}
+Task: Extract payment terms from consulting agreement
+Ground Truth: "retainer of $10,000 per month"
+
+17B Maverick Output: "retainer of $10,000 per month"
+  - Jaccard: 1.00, Precision: 1.00, Recall: 1.00, F2: 1.00
+
+70B Llama Output: "retainer is $10,000 monthly"
+  - Jaccard: 0.80, Precision: 0.83, Recall: 0.83, F2: 0.83
+\end{lstlisting}
+
+\subsubsection{Baseline Reasoning Task}
+
+\begin{lstlisting}
+Task: Is this statement hearsay?
+Rule: "Hearsay is an out-of-court statement offered 
+       to prove the truth of the matter asserted."
+Facts: "Witness testifies: 'I heard the defendant say 
+        the light was red.'"
+
+17B Maverick: "No" (INCORRECT)
+  - Accuracy: 0, Confidence: Low
+
+70B Llama: "Yes" (CORRECT)
+  - Accuracy: 1, Confidence: High
+\end{lstlisting}
+
+\subsection{C. Glossary}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|p{5cm}|}
+\hline
+\textbf{Term} & \textbf{Definition} \\
+\hline
+Extraction & Information retrieval from legal documents \\
+Reasoning & Logical analysis requiring domain knowledge \\
+MoE & Mixture of Experts (conditional computation) \\
+Router & System that selects optimal model for each task \\
+F2-Score & Recall-weighted F-score (emphasizes missed items) \\
+Jaccard & Set-based similarity metric \\
+Intent & Classified task type (extraction vs reasoning) \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{D. References}
+
+\begin{itemize}
+    \item LegalBench: A Benchmark for Legal Reasoning and Domain Knowledge
+    \item Mixture-of-Experts Models for Efficient Inference
+    \item Transfer Learning in Legal NLP
+    \item Azure AI Foundry Documentation
+    \item Llama 3 Model Cards and Technical Specifications
+\end{itemize}
+
+\end{document}

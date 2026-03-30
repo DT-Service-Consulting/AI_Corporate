@@ -1,0 +1,81 @@
+\section{Results Package for Prism Drafting}
+\label{sec:results_package}
+
+\subsection{Legacy Snapshot (Retained for Continuity)}
+The legacy snapshot used \textbf{1,005 tasks} (999 reasoning, 6 extraction) and \textbf{2,010 model-level evaluations}.
+It is retained for narrative continuity with earlier drafts.
+
+\begin{table}[H]
+\centering
+\caption{Legacy policy snapshot}
+\begin{tabular}{lccc}
+\toprule
+Policy & Avg score & Avg cost (USD) & 70B usage \\
+\midrule
+Always-70B & 0.584 & 0.248 & 100.0\% \\
+Always-Maverick & 0.643 & 0.116 & 0.0\% \\
+Rule + learning hybrid & 0.631 & 0.151 & 29.4\% \\
+Learning-only router & 0.650 & 0.126 & 6.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Final Validated Main Run (Primary Evidence)}
+The final validated run used retry-safe baseline generation and evaluation with
+\texttt{--seeds 42,43,44,45,46 --bootstrap-samples 4000 --task-balance-power 1.5 --uncertainty-threshold 0.7}.
+The benchmark contains \textbf{1,093 tasks} (\textbf{999 reasoning}, \textbf{94 extraction}) and
+\textbf{2,186 model-level evaluations}. The imbalance warning is cleared (\texttt{min\_task\_count=94}).
+
+\begin{table}[H]
+\centering
+\caption{Final overall policy ranking (mean across 5 seeds)}
+\begin{tabular}{lccc}
+\toprule
+Policy & Avg score & Avg cost (USD) & 70B usage \\
+\midrule
+Oracle upper bound & 0.6598 & 0.4971 & 82.65\% \\
+Learning-only router & \textbf{0.6353} & 0.2536 & 10.68\% \\
+Uncertainty fallback (70B) & 0.6305 & 0.2830 & 22.01\% \\
+Uncertainty fallback (Maverick) & 0.6258 & 0.2283 & 3.65\% \\
+Hybrid rule + learning & 0.6253 & 0.2778 & 28.13\% \\
+Always-Maverick baseline & 0.6126 & 0.1607 & 0.00\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Final task-family scores (main run)}
+\begin{tabular}{lcc}
+\toprule
+Policy & Extraction score & Reasoning score \\
+\midrule
+Always-Maverick & 0.2988 & 0.6425 \\
+Learning-only & 0.3978 & 0.6578 \\
+Uncertainty fallback (70B) & 0.4259 & 0.6500 \\
+Uncertainty fallback (Maverick) & 0.3978 & 0.6475 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Relative to \textit{always-Maverick}:
+\begin{itemize}
+  \item \textbf{Learning-only}: overall +0.0227 (+3.70\%), extraction +0.0991 (+33.15\%), reasoning +0.0154 (+2.40\%).
+  \item \textbf{Uncertainty fallback (70B)}: overall +0.0179 (+2.92\%), extraction +0.1272 (+42.56\%), reasoning +0.0075 (+1.17\%).
+  \item \textbf{Uncertainty fallback (Maverick)}: overall +0.0132 (+2.15\%), extraction +0.0991 (+33.15\%), reasoning +0.0050 (+0.78\%).
+  \item \textbf{Hybrid rule + learning}: overall +0.0126 (+2.06\%), extraction +0.0991 (+33.15\%), reasoning +0.0044 (+0.69\%).
+\end{itemize}
+
+Paired bootstrap significance vs \textit{always-Maverick}:
+\begin{itemize}
+  \item Learning-only: $\Delta=+0.02265$, 95\% CI [0.01438, 0.03168], $p<0.001$.
+  \item Uncertainty fallback (70B): $\Delta=+0.01789$, 95\% CI [0.00663, 0.02965], $p=0.002$.
+  \item Uncertainty fallback (Maverick): $\Delta=+0.01316$, 95\% CI [0.00767, 0.01945], $p<0.001$.
+  \item Hybrid rule + learning: $\Delta=+0.01264$, 95\% CI [0.00030, 0.02540], $p=0.044$.
+\end{itemize}
+
+Oracle-gap ordering (best non-oracle): Learning-only (regret 0.02452), then uncertainty fallback 70B (0.02928), then uncertainty fallback Maverick (0.03401).
+
+\subsection{Prism Drafting Notes}
+For final writing, use the \textbf{Final Validated Main Run} as primary evidence, keep the legacy table as historical context,
+and focus discussion on the non-recursive routing policies reported in the final validated main run.

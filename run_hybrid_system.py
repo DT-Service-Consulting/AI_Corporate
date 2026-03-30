@@ -8,7 +8,7 @@ from typing import Dict, List
 
 from tqdm import tqdm
 
-from core_logic import evaluate_reasoning, evaluate_single_extraction
+from core_logic import MODEL_COST_PER_1K_TOKENS, evaluate_reasoning, evaluate_single_extraction
 from intelligent_router import IntelligentRouter
 
 
@@ -35,12 +35,6 @@ CONTROL_GROUP = [
         "is_discovery": False,
     },
 ]
-
-
-MODEL_COST_PER_1K_TOKENS = {
-    "Llama-4-Maverick-17B-128E-Instruct-FP8": 0.20,
-    "Llama-3.3-70B-Instruct": 0.80,
-}
 
 
 def parse_args() -> argparse.Namespace:

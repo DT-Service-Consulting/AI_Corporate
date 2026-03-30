@@ -12,11 +12,12 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 
+from core_logic import EXTRACTION_MODEL_NAME, REASONING_MODEL_NAME
 from intelligent_router import IntelligentRouter
 
 
-MAVERICK_NAME = "Llama-4-Maverick-17B-128E-Instruct-FP8"
-LLAMA70_NAME = "Llama-3.3-70B-Instruct"
+MAVERICK_NAME = EXTRACTION_MODEL_NAME
+LLAMA70_NAME = REASONING_MODEL_NAME
 ERROR_OUTPUT_RE = re.compile(r"(?:azure error|error:\s*no client|internal_server_error|backend returned unexpected response)", re.IGNORECASE)
 
 
@@ -112,10 +113,10 @@ def load_pairs(results_path: str) -> pd.DataFrame:
     else:
         df["is_valid_eval"] = ~df["full_output"].astype(str).str.contains(ERROR_OUTPUT_RE, na=False)
 
-    df_m = df[df["model_name"].str.contains("Maverick", case=False, na=False)].copy()
-    df_l = df[df["model_name"].str.contains("70B", case=False, na=False)].copy()
+    df_m = df[df["model_name"] == MAVERICK_NAME].copy()
+    df_l = df[df["model_name"] == LLAMA70_NAME].copy()
     if df_m.empty or df_l.empty:
-        raise RuntimeError("Need both Maverick and 70B rows in results.json.")
+        raise RuntimeError(f"Need both {MAVERICK_NAME} and {LLAMA70_NAME} rows in results.json.")
 
     keep_cols = ["id", "task_type", "split", "doc_name", "ground_truth", "query", "input"]
     for col in keep_cols:
@@ -140,7 +141,8 @@ def load_pairs(results_path: str) -> pd.DataFrame:
         raise RuntimeError("No valid paired rows remain after filtering failed model calls.")
     merged["query_text"] = merged.apply(infer_text_input, axis=1)
     merged["doc_text"] = merged.apply(infer_doc_text, axis=1)
-    merged["best_label"] = np.where(merged["score_70b"] > merged["score_mav"], LLAMA70_NAME, MAVERICK_NAME)
+    # Keep training labels consistent with the oracle tie-break rule below.
+    merged["best_label"] = np.where(merged["score_70b"] >= merged["score_mav"], LLAMA70_NAME, MAVERICK_NAME)
     return merged
 
 

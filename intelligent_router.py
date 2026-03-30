@@ -1,10 +1,11 @@
 import re
+from core_logic import EXTRACTION_MODEL_NAME, REASONING_MODEL_NAME
 
 class IntelligentRouter:
     def __init__(self):
         # CONFIGURATION: The Specialist Models
-        self.EXTRACTION_MODEL = "Llama-4-Maverick-17B-128E-Instruct-FP8"
-        self.REASONING_MODEL = "Llama-3.3-70B-Instruct"
+        self.EXTRACTION_MODEL = EXTRACTION_MODEL_NAME
+        self.REASONING_MODEL = REASONING_MODEL_NAME
         
         # KEYWORDS: Signals for specific tasks
         
@@ -29,7 +30,7 @@ class IntelligentRouter:
         query_lower = user_query.lower()
         
         # Rule 1: Strong-signal check (priority: reasoning)
-        # If the query contains reasoning-oriented keywords, prefer the reasoning model (70B).
+        # If the query contains reasoning-oriented keywords, prefer the reasoning deployment.
         if any(word in query_lower for word in self.reasoning_keywords):
             return "reasoning"
             

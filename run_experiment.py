@@ -14,7 +14,7 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-from core_logic import MODELS_TO_TEST, evaluate_reasoning, evaluate_single_extraction
+from core_logic import MODEL_COST_PER_1K_TOKENS, MODELS_TO_TEST, evaluate_reasoning, evaluate_single_extraction
 
 
 CONTROL_GROUP = [
@@ -41,11 +41,6 @@ CONTROL_GROUP = [
     },
 ]
 
-
-MODEL_COST_PER_1K_TOKENS = {
-    "Llama-4-Maverick-17B-128E-Instruct-FP8": 0.20,
-    "Llama-3.3-70B-Instruct": 0.80,
-}
 
 ERROR_OUTPUT_RE = re.compile(r"(azure error|error:\s*no client|internal_server_error|backend returned unexpected response)", re.IGNORECASE)
 
