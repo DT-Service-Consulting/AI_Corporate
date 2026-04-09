@@ -95,7 +95,7 @@ class FluidReroutingLayer:
             f"Document excerpt basis:\n{state.document}"
         )
 
-    def monitor_and_reroute(self, state: RouterState, partial_output: str) -> RouterState:
+    def monitor_and_reroute(self, state: RouterState, partial_output: str, force_extraction: bool = False) -> RouterState:
         state.partial_output = partial_output
         signals = self.detect_struggle_signals(partial_output, state.document)
         state = self.update_belief(state, signals)
@@ -104,12 +104,22 @@ class FluidReroutingLayer:
         current_belief = state.routing_belief.get(state.assigned_model, 0.0)
         if current_belief < self.reroute_threshold:
             original_model = state.assigned_model
-            new_model = Model.REASONING_MODEL if original_model == Model.EXTRACTION_MODEL else Model.EXTRACTION_MODEL
+            new_model = Model.EXTRACTION_MODEL if force_extraction else (
+                Model.REASONING_MODEL if original_model == Model.EXTRACTION_MODEL else Model.EXTRACTION_MODEL
+            )
             state.reroute_triggered = True
             state.reroute_count += 1
             state.assigned_model = new_model
             other_model = Model.REASONING_MODEL if new_model == Model.EXTRACTION_MODEL else Model.EXTRACTION_MODEL
             state.routing_belief = normalise_belief({new_model: 0.72, other_model: 0.28})
+            logging.info(
+                "REROUTE | %s -> %s | signals=%s | belief_at_trigger=%.3f | reroute_count=%d",
+                original_model.value,
+                state.assigned_model.value,
+                [signal.value for signal in signals],
+                current_belief,
+                state.reroute_count,
+            )
             state.audit_log.append(
                 make_audit_entry(
                     layer="FRL",

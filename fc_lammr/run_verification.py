@@ -19,7 +19,7 @@ import project_secrets
 from fc_lammr.fc_lammr_router import FCLAMMRRouter
 from fc_lammr.run_fc_lammr_hybrid_test import compute_stratified_results, evaluate_router_output, write_stratified_outputs
 from fc_lammr.test_fc_lammr import FakeLLMClient
-from fc_lammr.utils.llm_client import validate_deployment_config
+from fc_lammr.utils.llm_client import get_429_count, get_project_deployment_config, reset_429_state, validate_deployment_config
 from run_hybrid_system import load_data
 
 
@@ -28,6 +28,7 @@ ALLOWED_MODES = {
     "TOMIL_SUCCESS",
     "TOMIL_NORMALISED",
     "REROUTED",
+    "BUDGET_FORCED_EXTRACTION",
     "CONTENT_FILTER_BLOCKED",
     "FAILED_LLM_CALL",
     "TOMIL_PARSE_FAILURE",
@@ -98,6 +99,7 @@ def _query_and_document(item: dict) -> tuple[str, str]:
 def main() -> int:
     logging.basicConfig(level=logging.INFO)
     args = parse_args()
+    reset_429_state()
     if args.dry_run:
         _ensure_dry_run_deployments()
     validate_deployment_config()
@@ -116,10 +118,35 @@ def main() -> int:
 
     results = []
     invariant_counts = {f"INV-{idx}": 0 for idx in range(1, 11)}
+    reasoning_calls = 0
+    extraction_calls = 0
+    tomil_calls = 0
+    reroute_to_reasoning = 0
+    reroute_to_extraction = 0
     for item in sample:
         query, document = _query_and_document(item)
         state = router.route(query, document)
         score, metrics, scored_output = evaluate_router_output(state, item)
+        for audit_entry in state.audit_log:
+            if audit_entry.get("layer") == "ToMIL" and audit_entry.get("decision") in {"intent_inferred", "parse_failure"}:
+                tomil_calls += 1
+                break
+        for audit_entry in state.audit_log:
+            if audit_entry.get("layer") != "execution":
+                continue
+            model_name = str(audit_entry.get("model", "")).lower()
+            if "reasoning" in model_name:
+                reasoning_calls += 1
+            elif "extraction" in model_name:
+                extraction_calls += 1
+        for audit_entry in state.audit_log:
+            if audit_entry.get("layer") != "FRL" or audit_entry.get("decision") != "reroute":
+                continue
+            new_model = str(audit_entry.get("new_model", "")).lower()
+            if "reasoning" in new_model:
+                reroute_to_reasoning += 1
+            elif "extraction" in new_model:
+                reroute_to_extraction += 1
         result = {
             "item_id": item["id"],
             "effective_routing_mode": state.effective_routing_mode,
@@ -152,8 +179,43 @@ def main() -> int:
         for key, passed in checks.items():
             invariant_counts[key] += int(bool(passed))
 
-    stratified = compute_stratified_results(results)
-    summary_json, summary_txt = write_stratified_outputs(results)
+    config = get_project_deployment_config()
+    call_summary = {
+        "reasoning_calls_total": reasoning_calls,
+        "extraction_calls_total": extraction_calls,
+        "tomil_calls_total": tomil_calls,
+        "total_429s_across_run": get_429_count(),
+        "reasoning_budget_limit": None,
+        "reasoning_budget_exhausted": False,
+        "budget_forced_extraction_tasks": sum(
+            1 for row in results if row["effective_routing_mode"] == "BUDGET_FORCED_EXTRACTION"
+        ),
+        "avg_calls_per_scored_task": round(
+            (
+                sum(1 + int(bool(row.get("reroute_triggered"))) for row in results if row.get("score") is not None)
+                / max(1, sum(1 for row in results if row.get("score") is not None))
+            ),
+            2,
+        ),
+        "reroute_to_reasoning": reroute_to_reasoning,
+        "reroute_to_extraction": reroute_to_extraction,
+        "net_reroute_reasoning_impact": reroute_to_reasoning - reroute_to_extraction,
+    }
+    run_metadata = {
+        "runner": "run_verification.py",
+        "max_tasks": args.max_tasks,
+        "dry_run": args.dry_run,
+        "sample_size": len(sample),
+        "tomil_deployment": config["TOMIL_DEPLOYMENT_NAME"],
+        "reasoning_deployment": config["REASONING_DEPLOYMENT_NAME"],
+        "tomil_equals_reasoning": config["TOMIL_DEPLOYMENT_NAME"] == config["REASONING_DEPLOYMENT_NAME"],
+    }
+    stratified = compute_stratified_results(results, call_summary=call_summary, run_metadata=run_metadata)
+    summary_json, summary_txt = write_stratified_outputs(
+        results,
+        call_summary=call_summary,
+        run_metadata=run_metadata,
+    )
     total_from_strata = sum(stratified[name]["n_tasks"] for name in ALLOWED_MODES if name in stratified)
     success_count = sum(1 for row in results if row["effective_routing_mode"] == "TOMIL_SUCCESS")
     normalised_count = sum(1 for row in results if row["effective_routing_mode"] == "TOMIL_NORMALISED")
@@ -169,7 +231,7 @@ def main() -> int:
     mode_counts = Counter(row["effective_routing_mode"] for row in results)
     overall_ready = all(count == len(results) for count in invariant_counts.values()) and all(strat_checks.values())
 
-    print("FC-LAMMR VERIFICATION RUN — RESULTS")
+    print("FC-LAMMR VERIFICATION RUN - RESULTS")
     print("=====================================")
     print(f"Tasks attempted: {len(results)}")
     print(f"Tasks completed with score: {completed_with_score}")
@@ -213,3 +275,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

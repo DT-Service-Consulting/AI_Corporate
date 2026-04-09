@@ -56,6 +56,16 @@ class RouterState:
     Central state object passed between all three layers.
     Every mutation to routing state must go through this object.
     This is the audit trail for route explainability.
+    effective_routing_mode values include:
+      PRL_MATCH
+      TOMIL_SUCCESS
+      TOMIL_NORMALISED
+      REROUTED
+      CONTENT_FILTER_BLOCKED
+      FAILED_LLM_CALL
+      TOMIL_PARSE_FAILURE
+      BUDGET_FORCED_EXTRACTION - reasoning budget exhausted, so the
+      task was routed directly to the extraction model.
     """
 
     query: str

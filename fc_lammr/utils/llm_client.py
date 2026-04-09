@@ -17,9 +17,27 @@ except Exception:  # pragma: no cover
 
 LOGGER = logging.getLogger(__name__)
 
+# Module-level 429 state - persists across all tasks in a run.
+_total_429_count: int = 0
+_consecutive_429_count: int = 0
+_global_backoff_floor: float = 0.0
+
 
 class ConfigurationError(RuntimeError):
     """Raised when FC-LAMMR deployment configuration is incomplete."""
+
+
+def get_429_count() -> int:
+    """Returns total 429s received across the entire run."""
+    return _total_429_count
+
+
+def reset_429_state() -> None:
+    """Reset module-level 429 tracking between runs."""
+    global _total_429_count, _consecutive_429_count, _global_backoff_floor
+    _total_429_count = 0
+    _consecutive_429_count = 0
+    _global_backoff_floor = 0.0
 
 
 def get_project_deployment_config() -> dict[str, str]:
@@ -72,9 +90,16 @@ def validate_deployment_config() -> None:
 class OpenAICompatibleLLMClient:
     """Thin wrapper around an OpenAI-compatible client."""
 
-    def __init__(self, client: Any | None = None, default_model: str | None = None, provider: str = "openai"):
+    def __init__(
+        self,
+        client: Any | None = None,
+        default_model: str | None = None,
+        provider: str = "openai",
+        request_timeout_s: float | None = None,
+    ):
         self.default_model = default_model
         self.provider = provider
+        self.request_timeout_s = request_timeout_s
         if client is not None:
             self.client = client
             return
@@ -120,16 +145,21 @@ class OpenAICompatibleLLMClient:
         max_tokens: int = 800,
     ) -> Any:
         """Issue a chat completion with typed failure semantics and rich logging."""
+        global _consecutive_429_count, _global_backoff_floor, _total_429_count
         selected_model = model or self.default_model
         delay = 0.5
         for attempt in range(1, 4):
             start = time.perf_counter()
             try:
+                request_kwargs = {}
+                if self.request_timeout_s is not None:
+                    request_kwargs["timeout"] = self.request_timeout_s
                 response = self.client.chat.completions.create(
                     model=selected_model,
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    **request_kwargs,
                 )
                 latency = time.perf_counter() - start
                 usage = getattr(response, "usage", None)
@@ -143,6 +173,8 @@ class OpenAICompatibleLLMClient:
                     messages,
                     response,
                 )
+                _consecutive_429_count = 0
+                _global_backoff_floor = max(0.0, _global_backoff_floor - 1.0)
                 return response
             except Exception as exc:  # pragma: no cover
                 latency = time.perf_counter() - start
@@ -159,6 +191,7 @@ class OpenAICompatibleLLMClient:
                     raise RuntimeError(f"CONTENT_FILTER_BLOCKED::{error_text}") from exc
                 transient_markers = ["429", "503", "timeout", "temporarily unavailable", "connection error", "connecterror"]
                 if any(marker in lowered for marker in transient_markers):
+                    is_429 = "429" in lowered
                     LOGGER.error(
                         "LLM transient failure model=%s attempt=%s latency=%.3fs error=%s traceback=%s",
                         selected_model,
@@ -169,7 +202,34 @@ class OpenAICompatibleLLMClient:
                     )
                     if attempt == 3:
                         raise RuntimeError(f"FAILED_LLM_CALL::{error_text}") from exc
-                    time.sleep(delay)
+                    if is_429:
+                        _total_429_count += 1
+                        _consecutive_429_count += 1
+                        _global_backoff_floor = min(2.0 * _consecutive_429_count, 30.0)
+                        effective_delay = max(delay, _global_backoff_floor)
+                        LOGGER.warning(
+                            "429 QUOTA PRESSURE | total_429s=%d | consecutive=%d | "
+                            "local_delay=%.1fs | global_floor=%.1fs | "
+                            "effective_sleep=%.1fs | deployment=%s | attempt=%d/3",
+                            _total_429_count,
+                            _consecutive_429_count,
+                            delay,
+                            _global_backoff_floor,
+                            effective_delay,
+                            selected_model,
+                            attempt,
+                        )
+                        time.sleep(effective_delay)
+                    else:
+                        LOGGER.warning(
+                            "TRANSIENT FAILURE | attempt=%d/3 | sleeping=%.1fs | "
+                            "error=%s | deployment=%s",
+                            attempt,
+                            delay,
+                            error_text[:80],
+                            selected_model,
+                        )
+                        time.sleep(delay)
                     delay *= 2
                     continue
                 LOGGER.error(

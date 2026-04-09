@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from datetime import datetime, timezone
 
 from fc_lammr.data_structures import Model, RouterState
 from fc_lammr.evaluation_layer import EvaluationLayer
@@ -11,6 +13,7 @@ from fc_lammr.pattern_recognition_layer import PatternRecognitionLayer
 from fc_lammr.tom_inference_layer import TheoryOfMindInferenceLayer
 from fc_lammr.utils.llm_client import OpenAICompatibleLLMClient, get_project_deployment_config, validate_deployment_config
 from fc_lammr.utils.prompt_helpers import build_extraction_prompt, postprocess_extraction_output
+from fc_lammr.utils.text_processing import make_audit_entry, normalise_belief
 
 
 LOGGER = logging.getLogger(__name__)
@@ -26,23 +29,45 @@ class FCLAMMRRouter:
         llm_client=None,
         pattern_library_path: str = "fc_lammr/pattern_library.json",
         prl_threshold: float = 0.82,
+        cold_prl_threshold: float = 0.91,
+        min_pattern_quality: float = 0.75,
         reroute_threshold: float = 0.65,
         signal_penalty: float = 0.15,
+        request_timeout_s: float | None = None,
+        max_task_seconds: float | None = None,
     ):
         validate_deployment_config()
         config = get_project_deployment_config()
         self.extraction_deployment = config["EXTRACTION_DEPLOYMENT_NAME"]
         self.reasoning_deployment = config["REASONING_DEPLOYMENT_NAME"]
         self.tomil_deployment = config["TOMIL_DEPLOYMENT_NAME"]
-        self.llm_client = llm_client if hasattr(llm_client, "create_chat_completion") else OpenAICompatibleLLMClient(llm_client, provider="azure")
-        self.prl = PatternRecognitionLayer(pattern_library_path, similarity_threshold=prl_threshold)
+        self.llm_client = (
+            llm_client
+            if hasattr(llm_client, "create_chat_completion")
+            else OpenAICompatibleLLMClient(
+                llm_client,
+                provider="azure",
+                request_timeout_s=request_timeout_s,
+            )
+        )
+        self.prl = PatternRecognitionLayer(
+            pattern_library_path,
+            similarity_threshold=prl_threshold,
+            cold_library_threshold=cold_prl_threshold,
+            min_pattern_quality=min_pattern_quality,
+        )
         self.tomil = TheoryOfMindInferenceLayer(self.llm_client, inference_model=self.tomil_deployment)
         self.frl = FluidReroutingLayer(reroute_threshold=reroute_threshold, signal_penalty=signal_penalty)
         self.evaluator = EvaluationLayer()
         self.last_handoff_prompt: str | None = None
+        self.max_task_seconds = max_task_seconds
 
     def _deployment_for(self, model: Model) -> str:
         return self.extraction_deployment if model == Model.EXTRACTION_MODEL else self.reasoning_deployment
+
+    def _now(self) -> str:
+        """UTC timestamp helper for budget-guard audit events."""
+        return datetime.now(timezone.utc).isoformat()
 
     def _build_reasoning_prompt(self, state: RouterState) -> str:
         return (
@@ -92,38 +117,89 @@ class FCLAMMRRouter:
             return 0.85
         return 0.75 if len(state.final_output.split()) >= 5 else 0.6
 
-    def route(self, query: str, document: str) -> RouterState:
+    def route(self, query: str, document: str, force_extraction: bool = False) -> RouterState:
+        route_start = time.perf_counter()
         state = RouterState(query=query, document=document)
-        state = self.prl.route(state)
-        if state.assigned_model is None:
-            state = self.tomil.infer_intent(state)
-            if state.tom_inference_quality and state.tom_inference_quality.parse_path == "TOMIL_PARSE_FAILURE":
-                state.effective_routing_mode = state.result_status or "TOMIL_PARSE_FAILURE"
-                return state
-            features = self.prl.extract_features(query, document)
-            state = self.tomil.compute_routing_belief(state, features)
-            if state.tom_inference_quality and state.tom_inference_quality.normalisation_applied:
-                state.effective_routing_mode = "TOMIL_NORMALISED"
-            else:
-                state.effective_routing_mode = "TOMIL_SUCCESS"
+        if force_extraction:
+            state.assigned_model = Model.EXTRACTION_MODEL
+            state.routing_belief = normalise_belief({Model.EXTRACTION_MODEL: 0.95, Model.REASONING_MODEL: 0.05})
+            state.effective_routing_mode = "BUDGET_FORCED_EXTRACTION"
+            state.audit_log.append(
+                make_audit_entry(
+                    layer="budget_guard",
+                    decision="extraction_model",
+                    belief_state=state.routing_belief,
+                    rationale="Reasoning call budget exhausted for this run.",
+                )
+            )
         else:
-            state.effective_routing_mode = "PRL_MATCH"
+            state = self.prl.route(state)
+            if state.assigned_model is None:
+                state = self.tomil.infer_intent(state)
+                if state.tom_inference_quality and state.tom_inference_quality.parse_path == "TOMIL_PARSE_FAILURE":
+                    state.effective_routing_mode = state.result_status or "TOMIL_PARSE_FAILURE"
+                    return state
+                features = self.prl.extract_features(query, document)
+                state = self.tomil.compute_routing_belief(state, features)
+                if state.tom_inference_quality and state.tom_inference_quality.normalisation_applied:
+                    state.effective_routing_mode = "TOMIL_NORMALISED"
+                else:
+                    state.effective_routing_mode = "TOMIL_SUCCESS"
+            else:
+                state.effective_routing_mode = "PRL_MATCH"
 
         current_model = state.assigned_model or Model.REASONING_MODEL
         is_extraction = state.task_type is None or state.task_type.value in {"extraction", "clause_identification"}
         prompt = build_extraction_prompt(query, document) if is_extraction else self._build_reasoning_prompt(state)
 
         while True:
+            if self.max_task_seconds is not None and (time.perf_counter() - route_start) > self.max_task_seconds:
+                LOGGER.warning(
+                    "TASK TIMEOUT | elapsed=%.1fs | limit=%.1fs | query=%s",
+                    time.perf_counter() - route_start,
+                    self.max_task_seconds,
+                    query[:120],
+                )
+                state.result_status = "FAILED_LLM_CALL"
+                state.effective_routing_mode = "FAILED_LLM_CALL"
+                state.audit_log.append(
+                    make_audit_entry(
+                        layer="guard",
+                        decision="task_timeout",
+                        belief_state=state.routing_belief,
+                        rationale="Task exceeded max_task_seconds and was aborted to keep the run progressing.",
+                        elapsed_seconds=round(time.perf_counter() - route_start, 3),
+                        max_task_seconds=self.max_task_seconds,
+                    )
+                )
+                return state
             output, failure_status = self._execute_model(current_model, prompt, document, is_extraction=is_extraction)
+            state.audit_log.append(
+                make_audit_entry(
+                    layer="execution",
+                    decision="model_call",
+                    belief_state=state.routing_belief,
+                    rationale="Executed the currently assigned model for this routing step.",
+                    model=current_model.value,
+                    deployment=self._deployment_for(current_model),
+                    status=failure_status or "success",
+                    force_extraction=force_extraction,
+                )
+            )
             if failure_status:
                 state.result_status = failure_status
                 state.effective_routing_mode = failure_status
                 return state
-            state = self.frl.monitor_and_reroute(state, output)
-            if not state.reroute_triggered:
+            state = self.frl.monitor_and_reroute(state, output, force_extraction=force_extraction)
+            latest_frl_decision = None
+            for audit_entry in reversed(state.audit_log):
+                if audit_entry.get("layer") == "FRL":
+                    latest_frl_decision = audit_entry.get("decision")
+                    break
+            if latest_frl_decision != "reroute":
                 state.final_output = output
                 break
-            state.effective_routing_mode = "REROUTED"
+            state.effective_routing_mode = "BUDGET_FORCED_EXTRACTION" if force_extraction else "REROUTED"
             if state.reroute_count >= self.MAX_REROUTES:
                 logging.warning(
                     "Task reached MAX_REROUTES (%s). Forcing completion with current model: %s.",
