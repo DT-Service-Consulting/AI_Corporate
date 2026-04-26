@@ -23,6 +23,9 @@ ENV/
 Thumbs.db
 desktop.ini
 
+# Pytest temp dirs
+pytest-cache-files-*/
+
 # Secrets and config
 project_secrets.py
 *.pem
@@ -51,8 +54,41 @@ hybrid_system_results*.json
 split_manifest.json
 run_metadata.json
 hybrid_no_*.json
+rerouted_tasks_log*.json
 rerouted_tasks_log*.jsonl
 fc_lammr_pattern_library_fresh.json
+
+# Unpublished paper content
+paper/
+
+# Data files — real client/contract data and benchmark artifacts
+data/tenders/
+data/real_tenders*.json
+data/legalbench_data.json
+data/*.json
+data/*.pdf
+
+# Proprietary FC-LAMMR internals
+fc_lammr/pattern_library.json
+fc_lammr/risk_register.json
+fc_lammr/analysis report.md
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+
+# Analysis docs (scratch notes)
+docs/
 
 # Jupyter
 .ipynb_checkpoints/

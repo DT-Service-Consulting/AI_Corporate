@@ -47,7 +47,7 @@ EXCLUDED_ROUTING_MODES = {"CONTENT_FILTER_BLOCKED", "FAILED_LLM_CALL", "TOMIL_PA
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Evaluate FC-LAMMR with the workspace's current hybrid methodology.")
-    p.add_argument("--output", default="results/fc_lammr_hybrid_results.json")
+    p.add_argument("--output", default="outputs/fc_lammr/fc_lammr_hybrid_results.json")
     p.add_argument("--split-manifest", default="split_manifest.json")
     p.add_argument("--split-filter", default="test", choices=["all", "train", "val", "test"])
     p.add_argument("--pattern-library", default="fc_lammr/pattern_library.json")

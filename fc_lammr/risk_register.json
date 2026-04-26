@@ -1,9 +1,0 @@
-{
-  "extraction": 0.1,
-  "reasoning": 0.4,
-  "risk_assessment": 0.9,
-  "nli": 0.3,
-  "compliance_check": 0.85,
-  "clause_identification": 0.2,
-  "tender_evaluation": 0.95
-}

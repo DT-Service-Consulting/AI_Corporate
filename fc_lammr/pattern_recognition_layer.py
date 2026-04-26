@@ -73,7 +73,7 @@ class PatternRecognitionLayer:
         self._last_combined_text: str = ""
         self._last_features: list[float] = []
         self._vocabulary_frozen = False
-        self.rerouted_log_path = (Path.cwd() / "results" / "rerouted_tasks_log.json").resolve()
+        self.rerouted_log_path = (Path.cwd() / "results" / "fc_lammr" / "rerouted_tasks_log.json").resolve()
         self._load_library()
 
     def _load_library(self) -> None:
