@@ -1,258 +1,296 @@
-# Router-eval: Intelligent Model Routing System
+# Router-eval: LAMMR — Legal Adaptive Multi-Model Router
 
-An advanced intelligent routing system for legal document analysis that dynamically selects between specialized extraction and reasoning models based on task characteristics.
+Hybrid routing system for legal AI workloads. Dynamically assigns requests to specialized extraction or reasoning models using deterministic rules, a learned classifier, and an optional fluid-collaboration layer (FC-LAMMR).
 
-## Overview
+Models:
+- **Maverick (17B)** — extraction model, lower cost
+- **Llama-3.3 (70B)** — reasoning model, higher capability
 
-Router-eval implements multiple routing strategies to optimize accuracy-first performance when processing legal documents. The system routes queries to either:
-- **Maverick (17B)**: Lightweight extraction model for factual information retrieval
-- **Llama-3 (70B)**: Powerful reasoning model for complex legal analysis
+---
 
-## Routing Methods
-
-The system implements five core routing strategies, five ensembling strategies, and two baselines:
-
-### 1. **Keyword Router**
-Analyzes query text for reasoning-oriented keywords (analyze, evaluate, compliant, valid, breach, etc.). Selects the reasoning model when keywords are detected, otherwise uses the extraction model.
-
-### 2. **Gen 3 ML Router (Random Forest)**
-A supervised machine learning router trained on sentence embeddings from historical performance data. Uses a Random Forest classifier to predict which model will perform best for each query based on semantic features.
-
-### 3. **Length Cascade**
-A document-length heuristic that routes large documents (>15k characters) to the extraction model (better for batch processing), and smaller documents to the reasoning model.
-
-### 4. **Confidence Cascade**
-Inspects the extraction model's output quality. Falls back to the reasoning model if the output is empty, too short (<5 chars), or contains failure phrases ("unable to", "cannot find", "sorry").
-
-### 5. **Oracle (Benchmark)**
-Theoretical upper-bound that always selects the model with the higher ground-truth score for evaluation purposes.
-
-## Ensembling Methods
-
-### 6. **Weighted Score Blend**
-Blends model scores: `score = w * 70B + (1 - w) * Maverick` (weight configurable in the UI).
-
-### 7. **Stacking Meta Router**
-Logistic Regression meta-classifier over router features (scores, score delta, doc length, keyword signal) to pick the model.
-
-### 8. **Soft MoE (Probabilistic Blend)**
-Uses RF probability output to blend scores as a soft mixture of experts.
-
-### 9. **Router Voting**
-Majority vote across Keyword, Length, Confidence, and ML Router, with a score-based tiebreak.
-
-### 10. **Two-Stage Cascade (Keyword + Confidence)**
-Route to 70B if either Keyword or Confidence indicates a fallback; otherwise Maverick.
-
-### Baselines
-- **Pure Maverick**: Always uses the extraction model
-- **Pure Llama-3 (70B)**: Always uses the reasoning model
-
-## Project Structure
+## Repository Structure
 
 ```
 Router-eval/
-├── .gitignore                    # Git ignore rules for secrets and outputs
-├── app.py                        # Main application entry point
-├── architecture_lab.py           # Streamlit visualization and ML router training
-├── intelligent_router.py         # Compact rule-based routing implementation
-├── ingest_legalbench.py         # LegalBench dataset ingestion pipeline
-├── ingest_tenders.py            # Legal tender document ingestion
-├── core_logic.py                # Core routing and classification logic
-├── run_experiment.py            # Experiment execution script
-├── run_hybrid_system.py          # Hybrid system runner
-├── project_secrets.py           # Configuration (excluded from git)
-├── requirements.txt             # Python dependencies
-├── documentation.tex            # LaTeX documentation
-├── data/                        # Data directory
-│   ├── legalbench_data.json    # LegalBench dataset
-│   ├── real_tenders.json       # Real legal tenders
-│   └── tenders/               # Tender documents
-└── outputs/                    # Generated results (excluded from git)
+├── core_logic.py                  # Shared model calls, scoring, cost estimation
+├── intelligent_router.py          # Rule-based router (keyword / length heuristics)
+├── run_experiment.py              # Baseline generation (both models on all tasks)
+├── run_hybrid_system.py           # Hybrid rule+learning routing run
+├── evaluate_research_ready.py     # Multi-seed bootstrap evaluation + significance tests
+├── run_component_ablations.py     # Extraction chunking / NOT_FOUND ablations
+├── run_split_robustness.py        # Dynamic stratified split robustness runner
+├── ingest_legalbench.py           # LegalBench ingestion pipeline
+├── ingest_tenders.py              # Tender document ingestion
+├── mine_extraction_tasks.py       # Clause-level extraction QA mining
+├── app.py                         # Streamlit dashboard
+├── architecture_lab.py            # ML router training + visualization
+├── fc_lammr/                      # FC-LAMMR package (fluid collaboration layer)
+│   ├── run_fc_lammr_hybrid_test.py   # FC-LAMMR evaluation runner
+│   ├── rescore_fc_lammr_results.py   # Offline parser-correction sensitivity analysis
+│   ├── fc_lammr_router.py
+│   ├── pattern_recognition_layer.py
+│   ├── fluid_rerouting_layer.py
+│   ├── evaluation_layer.py
+│   ├── tom_inference_layer.py
+│   └── utils/
+├── paper/                         # Unpublished paper drafts (gitignored)
+├── docs/                          # Analysis notes (gitignored)
+├── data/                          # Datasets (gitignored — contains real contract data)
+├── outputs/                       # Run outputs (gitignored)
+│   ├── fc_lammr/                  # FC-LAMMR hybrid results
+│   ├── research_eval*/            # evaluate_research_ready.py outputs
+│   └── component_ablations/
+├── results/                       # Evaluation artifacts (gitignored)
+│   ├── checkpoints/               # FC-LAMMR run checkpoints
+│   ├── fc_lammr/                  # FC-LAMMR summaries and logs
+│   └── errors/
+├── project_secrets.py             # Azure credentials — gitignored, never commit
+├── requirements.txt
+└── .gitignore
 ```
+
+---
+
+## Prerequisites
+
+- Python 3.10+
+- Azure AI Foundry access (Maverick + Llama-3.3-70B deployments)
+- Azure Document Intelligence (optional, for PDF ingestion)
+
+---
 
 ## Installation
 
-### Prerequisites
-- Python 3.10+
-- pip or conda
-
-### Setup
-
-1. Clone the repository:
 ```bash
-git clone https://github.com/DT-Service-Consulting/AI_Corporate.git
+git clone <repo-url>
 cd Router-eval
-```
-
-2. Create a virtual environment:
-```bash
 python -m venv venv
-.\venv\Scripts\Activate.ps1  # Windows
-source venv/bin/activate     # macOS/Linux
-```
+# Windows
+.\venv\Scripts\Activate.ps1
+# macOS/Linux
+source venv/bin/activate
 
-3. Install dependencies:
-```bash
 pip install -r requirements.txt
 ```
 
-## Usage
-
-### Run the Architecture Lab (Visualization)
-```bash
-streamlit run architecture_lab.py
-```
-Opens an interactive dashboard comparing all routing strategies with accuracy-focused metrics and secondary cost analysis.
-
-### Ingest Legal Data
-```bash
-python ingest_legalbench.py
-```
-Downloads and processes the LegalBench dataset for training and evaluation.
-
-### Mine Clause-Level Extraction Tasks (50+)
-```bash
-python mine_extraction_tasks.py --input data/real_tenders.json --output data/real_tenders_extraction_qa.json --target-min 50
-```
-Generates extraction QA records with:
-- exact target spans (`target`) and explicit query intents (`query_intent`)
-- hard negatives for missing clauses (`target = "NOT_FOUND"`)
-- long-document stress variants
-
-`run_experiment.py` and `run_hybrid_system.py` automatically prefer `data/real_tenders_extraction_qa.json` when present.
-
-### Run Experiments
-```bash
-python run_experiment.py
-```
-Executes the full evaluation pipeline comparing routing and ensembling methods.
-
-Reproducibility options:
-```bash
-python run_experiment.py --seed 42 --test-size 0.2 --val-size 0.2 --rate-limit-s 0.5
-```
-This also writes:
-- `split_manifest.json` (deterministic train/val/test assignment)
-- `run_metadata.json` (run-level provenance)
-
-### Run Hybrid System
-```bash
-python run_hybrid_system.py
-```
-Runs the complete hybrid routing system with both baselines and intelligent routers.
-
-Ablation-friendly options:
-```bash
-python run_hybrid_system.py --split-filter test --router-variant full
-python run_hybrid_system.py --split-filter test --router-variant no_keyword --output hybrid_no_keyword.json
-python run_hybrid_system.py --split-filter test --router-variant no_length --output hybrid_no_length.json
-python run_hybrid_system.py --split-filter test --router-variant no_reasoning_override --output hybrid_no_override.json
-```
-
-### Publication-Focused Evaluation
-```bash
-python evaluate_research_ready.py --results results.json --output-dir outputs/research_eval --seeds 42,43,44,45,46
-```
-Generates:
-- `outputs/research_eval/method_summary.csv` (mean/std across seeds)
-- `outputs/research_eval/method_by_seed.csv` (per-seed results)
-- `outputs/research_eval/task_breakdown.csv` (per-task-type breakdown)
-- `outputs/research_eval/oracle_gap_summary.csv` (regret-to-oracle summary + CI)
-- `outputs/research_eval/paired_significance.csv` (paired bootstrap significance tests)
-- `outputs/research_eval/instance_level_scores.csv` (instance-level scores for custom analysis)
-- `outputs/research_eval/task_imbalance_report.json` (task-count imbalance warning for claim scoping)
-- `outputs/research_eval/error_cases_seed_*.json` (top regret cases for qualitative analysis)
-
-Useful options:
-```bash
-python evaluate_research_ready.py --reference-method always_maverick --bootstrap-samples 4000 --ci-level 0.95 --uncertainty-threshold 0.70 --task-balance-power 1.5
-```
-
-Recommended for extraction-biased uncertainty handling:
-```bash
-python evaluate_research_ready.py --results results.json --output-dir outputs/research_eval --seeds 42,43,44,45,46 --task-balance-power 1.5 --uncertainty-threshold 0.7
-```
-This includes `learning_uncertainty_fallback_maverick`, which routes uncertain cases to the extraction model.
-
-Recursive routing policy is also available via `recursive_routing_policy` with controls:
-```bash
-python evaluate_research_ready.py --results results.json --output-dir outputs/research_eval --seeds 42,43,44,45,46 --recursive-max-depth 3 --recursive-low-confidence 0.62 --recursive-high-confidence 0.78
-```
-
-Split-robustness runner (dynamic stratified splits):
-```bash
-python run_split_robustness.py --execute
-```
-
-Component ablations for extraction chunking and NOT_FOUND normalization:
-```bash
-python run_component_ablations.py --execute
-```
-
-## Key Features
-
-- **Multiple routing strategies**: Choose the best approach for your use case
-- **Ensembling strategies**: Blend or combine router decisions for higher accuracy
-- **Accuracy-first optimization**: Prioritize task performance while tracking secondary cost/latency
-- **ML-based routing**: Train supervised routers on your data
-- **Comprehensive evaluation**: Compare routing methods side-by-side
-- **Interactive visualization**: Streamlit dashboard with performance metrics
-
-## Performance
-
-The routing system evaluates accuracy as the primary objective, with cost/latency as secondary diagnostics:
-- Each routing method is benchmarked against ground-truth scores
-- Cost is estimated per record from approximate token counts and model-specific rates
-- Latency is logged per record to support quality-cost-latency tradeoff analysis
-- The Oracle provides theoretical maximum performance
-
-## Scoring Notes
-
-- **Extraction tasks** use soft overlap metrics (Jaccard/F2). This includes discovery tasks to avoid artificially zeroed extraction accuracy.
-- **Reasoning tasks** use a soft score based on answer similarity and correctness to avoid binary-only labels.
+---
 
 ## Configuration
 
-Edit these constants in the relevant files:
+Create `project_secrets.py` at the repo root (gitignored):
 
-**architecture_lab.py:**
 ```python
-BASELINE_FILE = "results.json"
-SEMANTIC_MODEL_NAME = 'all-MiniLM-L6-v2'
+# Azure AI Foundry
+AZURE_LLAMA_ENDPOINT = "https://<your-resource>.openai.azure.com/"
+AZURE_LLAMA_KEY = "<your-key>"
+AZURE_OPENAI_API_VERSION = "2024-12-01-preview"
+
+# Deployment names
+EXTRACTION_DEPLOYMENT_NAME = "<maverick-deployment>"
+REASONING_DEPLOYMENT_NAME  = "<llama70b-deployment>"
+TOMIL_DEPLOYMENT_NAME      = "<tomil-deployment>"   # FC-LAMMR only
+
+# Document Intelligence (optional — only needed for PDF ingestion)
+DOC_INTEL_ENDPOINT = "https://<your-resource>.cognitiveservices.azure.com/"
+DOC_INTEL_KEY      = "<your-key>"
 ```
 
-**intelligent_router.py:**
-- Modify `reasoning_keywords` list for custom keyword routing
-- Adjust `route_by_length()` threshold (currently 15k chars)
+---
 
-## Dependencies
+## Data Setup
 
-See `requirements.txt` for full list. Key packages:
-- `pandas`: Data manipulation
-- `scikit-learn`: ML router (Random Forest)
-- `sentence-transformers`: Semantic embeddings
-- `streamlit`: Interactive visualization
-- `plotly`: Charts and graphs
+Data files are gitignored. Obtain or regenerate locally before running experiments.
 
-## Git Workflow
+### Ingest LegalBench reasoning tasks
+```bash
+python ingest_legalbench.py
+# writes: data/legalbench_data.json
+```
+
+### Ingest tender documents
+```bash
+python ingest_tenders.py
+# reads:  data/tenders/*.pdf
+# writes: data/real_tenders.json
+```
+
+### Mine clause-level extraction tasks
+```bash
+python mine_extraction_tasks.py \
+  --input data/real_tenders.json \
+  --output data/real_tenders_extraction_qa.json \
+  --target-min 50
+# Generates extraction QA with hard negatives (NOT_FOUND) and long-doc stress variants.
+# run_experiment.py and run_hybrid_system.py auto-detect this file when present.
+```
+
+---
+
+## Running Experiments
+
+### Step 1 — Generate baselines
+
+Evaluates both models on all tasks. Produces `results.json` + split manifest.
 
 ```bash
-# Stage changes
-git add .
-
-# Commit with descriptive message
-git commit -m "feature: Add routing strategy for legal documents"
-
-# Push to main
-git push origin main
+python run_experiment.py \
+  --seed 42 \
+  --test-size 0.2 \
+  --val-size 0.2 \
+  --rate-limit-s 0.5
+# outputs: results.json, split_manifest.json, run_metadata.json
 ```
+
+### Step 2 — Run hybrid routing
+
+Applies rule+learning routing over the test split.
+
+```bash
+python run_hybrid_system.py \
+  --split-filter test \
+  --router-variant full
+# output: hybrid_system_results.json
+```
+
+Ablation variants:
+```bash
+python run_hybrid_system.py --split-filter test --router-variant no_keyword       --output hybrid_no_keyword.json
+python run_hybrid_system.py --split-filter test --router-variant no_length        --output hybrid_no_length.json
+python run_hybrid_system.py --split-filter test --router-variant no_reasoning_override --output hybrid_no_override.json
+```
+
+### Step 3 — Publication-ready evaluation
+
+Multi-seed bootstrap evaluation, oracle-gap analysis, and paired significance tests.
+
+```bash
+python evaluate_research_ready.py \
+  --results results.json \
+  --output-dir outputs/research_eval \
+  --seeds 42,43,44,45,46 \
+  --bootstrap-samples 4000 \
+  --ci-level 0.95 \
+  --task-balance-power 1.5 \
+  --uncertainty-threshold 0.7 \
+  --reference-method always_maverick
+```
+
+Outputs written to `outputs/research_eval/`:
+| File | Contents |
+|------|----------|
+| `method_summary.csv` | mean/std per method across seeds |
+| `method_by_seed.csv` | per-seed results |
+| `task_breakdown.csv` | extraction vs reasoning split |
+| `oracle_gap_summary.csv` | regret-to-oracle + CI |
+| `paired_significance.csv` | paired bootstrap p-values |
+| `instance_level_scores.csv` | per-instance scores |
+| `task_imbalance_report.json` | class imbalance warning |
+| `error_cases_seed_*.json` | top regret cases |
+
+Recursive routing policy:
+```bash
+python evaluate_research_ready.py \
+  --results results.json \
+  --output-dir outputs/research_eval \
+  --seeds 42,43,44,45,46 \
+  --recursive-max-depth 3 \
+  --recursive-low-confidence 0.62 \
+  --recursive-high-confidence 0.78
+```
+
+### Step 4 (optional) — Robustness and ablation runs
+
+```bash
+# Dynamic stratified split robustness
+python run_split_robustness.py --execute
+
+# Extraction chunking / NOT_FOUND normalization ablations
+python run_component_ablations.py --execute
+```
+
+---
+
+## FC-LAMMR (Fluid Collaboration Layer)
+
+FC-LAMMR adds a pattern-recognition and fluid-rerouting layer on top of the base router.
+
+### Run FC-LAMMR evaluation
+
+```bash
+python -m fc_lammr.run_fc_lammr_hybrid_test \
+  --split-filter test \
+  --split-manifest split_manifest.json \
+  --output outputs/fc_lammr/fc_lammr_hybrid_results.json \
+  --task-sleep 1.0 \
+  --max-reasoning-calls 400 \
+  --checkpoint-interval 25
+```
+
+Key flags:
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--task-sleep` | `0.5` | Seconds between tasks. Use `1.0` on live runs to avoid 429s |
+| `--max-reasoning-calls` | unlimited | Hard cap on 70B calls; use `400` as conservative budget |
+| `--checkpoint-interval` | `50` | Tasks between checkpoint writes |
+| `--resume-from` | — | Path to checkpoint JSON to resume an interrupted run |
+| `--prl-threshold` | `0.82` | Pattern recognition confidence threshold |
+| `--cold-prl-threshold` | `0.91` | Threshold when pattern library is cold |
+| `--reroute-threshold` | `0.65` | Fluid rerouting trigger threshold |
+
+Resume an interrupted run:
+```bash
+python -m fc_lammr.run_fc_lammr_hybrid_test \
+  --resume-from results/checkpoints/fc_lammr_checkpoint_<N>_<timestamp>.json \
+  --output outputs/fc_lammr/fc_lammr_hybrid_results.json
+```
+
+### Offline parser-correction sensitivity analysis
+
+Re-scores completed FC-LAMMR results with corrected answer-format parsing (raw outputs unchanged).
+
+```bash
+python -m fc_lammr.rescore_fc_lammr_results \
+  --input  outputs/fc_lammr/fc_lammr_hybrid_results_all.json \
+  --output outputs/fc_lammr/fc_lammr_hybrid_results_all_parser_corrected.json \
+  --summary-json results/fc_lammr/fc_lammr_parser_corrected_summary.json \
+  --summary-md  results/fc_lammr/fc_lammr_parser_corrected_summary.md
+```
+
+### Run FC-LAMMR tests
+
+```bash
+python -m pytest fc_lammr/test_fc_lammr.py -v
+```
+
+---
+
+## Streamlit Dashboard
+
+```bash
+streamlit run architecture_lab.py
+```
+
+Requires `results.json` and `hybrid_system_results.json` at the repo root (generated by Steps 1–2).
+
+---
+
+## Scoring
+
+- **Extraction tasks** — overlap-oriented metrics (Jaccard / F2 family)
+- **Reasoning tasks** — correctness-based scoring aligned with LegalBench criteria
+- **Zero-score rate** — fraction of tasks scoring exactly 0 (complete failure); reported per policy and task family
+- **Cost** — estimated from token counts × per-token Azure rate; secondary indicator only
+
+---
 
 ## Security
 
-The `.gitignore` excludes:
-- Personal configuration files (`project_secrets.py`)
-- Generated outputs and results
-- Python cache (`__pycache__/`)
-- Virtual environments
-- IDE settings
+`project_secrets.py` is gitignored. Never commit it. Rotate keys if accidentally exposed.
+
+Files excluded from git (see `.gitignore`):
+- `project_secrets.py` — Azure API credentials
+- `paper/` — unpublished research
+- `data/` — real contract data and benchmark datasets
+- `outputs/`, `results/` — generated artifacts
+- `fc_lammr/pattern_library.json`, `fc_lammr/risk_register.json` — proprietary internals
+- LaTeX build artifacts (`*.aux`, `*.bbl`, etc.)

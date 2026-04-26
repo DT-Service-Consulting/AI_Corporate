@@ -290,7 +290,7 @@ class FCLAMMRPatchSetTests(unittest.TestCase):
         prl.write_back(state, 0.9)
         payload = json.loads(Path(self.library_path).read_text(encoding="utf-8"))
         self.assertEqual(payload, [])
-        self.assertTrue(Path("results/rerouted_tasks_log.json").exists())
+        self.assertTrue(Path("results/fc_lammr/rerouted_tasks_log.json").exists())
 
     def test_rerouted_log_fallback_does_not_crash_run(self) -> None:
         prl = PatternRecognitionLayer(self.library_path)
