@@ -282,15 +282,3 @@ Requires `results.json` and `hybrid_system_results.json` at the repo root (gener
 - **Cost** — estimated from token counts × per-token Azure rate; secondary indicator only
 
 ---
-
-## Security
-
-`project_secrets.py` is gitignored. Never commit it. Rotate keys if accidentally exposed.
-
-Files excluded from git (see `.gitignore`):
-- `project_secrets.py` — Azure API credentials
-- `paper/` — unpublished research
-- `data/` — real contract data and benchmark datasets
-- `outputs/`, `results/` — generated artifacts
-- `fc_lammr/pattern_library.json`, `fc_lammr/risk_register.json` — proprietary internals
-- LaTeX build artifacts (`*.aux`, `*.bbl`, etc.)
