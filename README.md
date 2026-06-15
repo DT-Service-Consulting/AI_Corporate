@@ -159,7 +159,7 @@ python run_hybrid_system.py --split-filter test --router-variant no_length      
 python run_hybrid_system.py --split-filter test --router-variant no_reasoning_override --output hybrid_no_override.json
 ```
 
-### Step 3 — Publication-ready evaluation
+### Step 3 — Evaluation
 
 Multi-seed bootstrap evaluation, oracle-gap analysis, and paired significance tests.
 
